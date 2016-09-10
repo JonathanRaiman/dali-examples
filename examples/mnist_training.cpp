@@ -28,7 +28,7 @@ struct MnistCnn {
         fc2   = Layer(1024,       10);
     }
 
-    Tensor activate(Tensor images, float keep_prop) const {
+    Tensor activate(Tensor images, float keep_prob) const {
         images = images.reshape({-1, 1, 28, 28});
         // shape (B, 1, 28, 28)
 
@@ -41,10 +41,11 @@ struct MnistCnn {
         // shape (B, 64, 7, 7)
 
         out = out.reshape({out.shape()[0], 7 * 7 * 64});
-        out = fc1.activate(out);
+
+        out = fc1.activate(out).relu();
         // shape (B, 1024)
 
-        out = tensor_ops::dropout(out, 1.0 - keep_prop);
+        out = tensor_ops::dropout(out, 1.0 - keep_prob);
 
         out = fc2.activate(out);
         // shape (B, 10)
