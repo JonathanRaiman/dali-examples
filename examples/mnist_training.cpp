@@ -76,7 +76,7 @@ double accuracy(const MnistCnn& model, Tensor images, Tensor labels, int batch_s
         if (labels.dtype() == DTYPE_INT32) {
             correct = labels.w[batch_slice];
         } else {
-            correct = op::astype(op::argmax(labels.w[batch_slice], -1), DTYPE_INT32);
+            correct = op::argmax((Array)labels.w[batch_slice], -1);
         }
         num_correct += op::sum(op::equals(predictions, correct));
     }
