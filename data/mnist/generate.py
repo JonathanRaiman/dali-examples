@@ -19,14 +19,23 @@ def main():
         print("Already downloaded. Skipping")
     else:
         mnist = fetch_mldata('MNIST original')
+        np.random.seed(1234)
 
-        train_x, train_y = (mnist.data[:-10000].astype(np.float32) / 255.0).astype(np.float32), mnist.target[:-10000].astype(np.int32)
-        test_x, test_y = (mnist.data[-10000:].astype(np.float32) / 255.0).astype(np.float32), mnist.target[-10000:].astype(np.int32)
+        data = mnist.data
+        target = mnist.target
+        indices = np.arange(len(data))
+        np.random.shuffle(indices)
 
-        np.save(join(SCRIPT_DIR, "train_x.npy"), train_x[:0.9 * train_x.shape[0]])
-        np.save(join(SCRIPT_DIR, "train_y.npy"), train_y[:0.9 * train_y.shape[0]])
-        np.save(join(SCRIPT_DIR, "validate_x.npy"), train_x[0.9 * train_x.shape[0]:])
-        np.save(join(SCRIPT_DIR, "validate_y.npy"), train_y[0.9 * train_y.shape[0]:])
+        data = data[indices]
+        target = target[indices]
+
+        train_x, train_y = (data[:-10000].astype(np.float32) / 255.0).astype(np.float32), target[:-10000].astype(np.int32)
+        test_x, test_y = (data[-10000:].astype(np.float32) / 255.0).astype(np.float32), target[-10000:].astype(np.int32)
+
+        np.save(join(SCRIPT_DIR, "train_x.npy"), train_x[:int(0.9 * train_x.shape[0])])
+        np.save(join(SCRIPT_DIR, "train_y.npy"), train_y[:int(0.9 * train_y.shape[0])])
+        np.save(join(SCRIPT_DIR, "validate_x.npy"), train_x[int(0.9 * train_x.shape[0]):])
+        np.save(join(SCRIPT_DIR, "validate_y.npy"), train_y[int(0.9 * train_y.shape[0]):])
 
         np.save(join(SCRIPT_DIR, "test_x.npy"), test_x)
         np.save(join(SCRIPT_DIR, "test_y.npy"), test_y)
