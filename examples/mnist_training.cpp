@@ -70,7 +70,7 @@ double accuracy(const MnistCnn& model, Tensor images, Tensor labels, int batch_s
     for (int batch_start = 0; batch_start < num_images; batch_start += batch_size) {
         Slice batch_slice(batch_start, std::min(batch_start + batch_size, num_images));
         auto probs = model.activate(images[batch_slice], 1.0);
-        Array predictions = op::astype(op::argmax(probs.w, -1), DTYPE_INT32);
+        Array predictions = op::argmax(probs.w, -1);
 
         Array correct;
         if (labels.dtype() == DTYPE_INT32) {
@@ -83,16 +83,18 @@ double accuracy(const MnistCnn& model, Tensor images, Tensor labels, int batch_s
     return (Array)(num_correct.astype(DTYPE_DOUBLE) / num_images);
 }
 
-double training_epoch(const MnistCnn& model,
+std::tuple<double, double> training_epoch(const MnistCnn& model,
                       std::shared_ptr<solver::AbstractSolver> solver,
                       Tensor images,
                       Tensor labels,
                       int batch_size) {
     int num_images = images.shape()[0];
 
-    double epoch_error;
+    double epoch_error = 0;
 
     auto params = model.parameters();
+
+    double num_correct = 0;
 
     for (int batch_start = 0;
             batch_start < images.shape()[0];
@@ -105,14 +107,18 @@ double training_epoch(const MnistCnn& model,
         Tensor probs = model.activate(batch_images, 0.5);
 
         Tensor error = tensor_ops::softmax_cross_entropy(probs, batch_labels);
-        error.grad();
+        error.mean().grad();
         epoch_error += (double)(Array)error.w.sum();
+        num_correct += (int)(Array)op::sum(op::equals(op::argmax(probs.w, -1), batch_labels.w));
 
         graph::backward();
         solver->step(params);
     }
 
-    return epoch_error / (double)num_images;
+    return std::make_tuple(
+        epoch_error / (double)num_images,
+        num_correct / (double)num_images
+    );
 }
 
 
@@ -179,12 +185,13 @@ int main (int argc, char *argv[]) {
     solver->clip_abs  = 0.0;
 
     PerformanceReport report;
+    double epoch_error, epoch_correct;
 
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < 10; ++i) {
         auto epoch_start_time = std::chrono::system_clock::now();
 
         report.start_capture();
-        auto epoch_error      = training_epoch(model, solver, train_x, train_y, batch_size);
+        std::tie(epoch_error, epoch_correct) = training_epoch(model, solver, train_x, train_y, batch_size);
         report.stop_capture();
         report.print();
 
@@ -193,7 +200,8 @@ int main (int argc, char *argv[]) {
         auto validate_acc  = accuracy(model, validate_x, validate_y, batch_size);
 
         std::cout << "Epoch " << i
-                  << ", train:      " << epoch_error
+                  << ", train:      " << 100.0 * epoch_correct
+                  << " (nll " << epoch_error << ")"
                   << ", validation: " << 100.0 * validate_acc << '%'
                   << ", time:       " << epoch_duration.count() << "s" << std::endl;
     }
