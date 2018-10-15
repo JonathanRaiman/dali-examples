@@ -1,8 +1,0 @@
---epochs=2000
---input_size=100
---j=9
---patience=20
---shortcut
---stack_size=2
---train=../data/paul_graham/train.txt
---validation=../data/paul_graham/validation.txt

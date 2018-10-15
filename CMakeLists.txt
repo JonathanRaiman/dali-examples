@@ -20,50 +20,37 @@ find_package(Gflags REQUIRED)
 include_directories(${GFLAGS_INCLUDE_DIRS})
 add_definitions(-DGFLAGS_NAMESPACE=${GFLAGS_NAMESPACE})
 
-add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/SQLiteCpp)
-include_directories(${PROJECT_SOURCE_DIR}/third_party/SQLiteCpp/include)
-
 # ensure we are using C++11
 # TODO(jonathan): is this flag required for apple?
 # -stdlib=libc++
 SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} --std=c++11 -O3 -g -fPIC" )
 
-
-# compile protobufs defined by us.
-add_subdirectory(${PROJECT_SOURCE_DIR}/protobuf)
 include_directories(${PROJECT_SOURCE_DIR})
 
 # TODO(szymon): reenable once models are ported
 # file(GLOB_RECURSE UTILS_FILES "${PROJECT_SOURCE_DIR}/models/*.cpp")
 
-# compile utils for examples - handling protobufs and sqlite etc.
 list(APPEND       UTILS_FILES "examples/utils.h")
 add_library(utils examples/utils.cpp ${UTILS_FILES})
-target_link_libraries(utils SQLiteCpp sqlite3 proto ${CMAKE_DL_LIBS})
+target_link_libraries(utils ${CMAKE_DL_LIBS})
 
 # Compile all the examples
 set(EXAMPLES_DIR ${PROJECT_SOURCE_DIR}/examples)
 set(EXAMPLES_BUILD_DIR ${PROJECT_SOURCE_DIR}/build/examples)
-set(EXAMPLE_PROGRAMS api_showcase
-                     arithmetic
-                     babi_solvers
-                     beam_tree_training
-                     bidirectional_sentiment
-                     character_prediction
-                     grid_search_simple
-                     language_model
-                     language_model_from_senti
-                     lattice_prediction
-                     loading_from_sqlite
-                     lstm_sentiment
-                     machine_comprehension
-                     mlbasics_learn_to_add
-                     mlbasics_rnn_binary_addition
-                     sparse_lstm_sentiment
-                     sparse_ner
-                     sparse_paraphrase
+set(EXAMPLE_PROGRAMS # api_showcase
+                     # arithmetic
+                     # beam_tree_training
+                     # bidirectional_sentiment
+                     # character_prediction
+                     # language_model
+                     # lstm_sentiment
+                     # mlbasics_learn_to_add
+                     # mlbasics_rnn_binary_addition
+                     # sparse_lstm_sentiment
+                     # sparse_ner
+                     # sparse_paraphrase
                      mnist_training
-                     visualizer
+                     # visualizer
                      )
 message("DALI_AND_DEPS_LIBRARIES => " ${DALI_AND_DEPS_LIBRARIES})
 foreach(program ${EXAMPLE_PROGRAMS})

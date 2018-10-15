@@ -7,7 +7,6 @@
 #include <chrono>
 
 #include <dali/core.h>
-#include <dali/utils/NlpUtils.h>
 #include <dali/data_processing/SST.h>
 #include <dali/data_processing/Glove.h>
 #include <dali_visualizer/visualizer.h>

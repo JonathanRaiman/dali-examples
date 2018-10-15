@@ -9,11 +9,6 @@ using std::string;
 
 // Test file for LSTM
 int main () {
-    string tsv_file = STR(DALI_DATA_DIR) "/tests/CoNLL_NER_dummy_dataset.tsv";
-    auto dataset = utils::load_tsv(tsv_file, 4, '\t');
-    utils::assert2(dataset.size() == 7, "ne");
-    utils::assert2(dataset.back().front().front() == ".", "ne");
-
     LSTM lstm(30, 50,
         true   // do use Alex Graves' 2013 LSTM
                // where memory connects to gates

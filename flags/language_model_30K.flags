@@ -1,8 +1,0 @@
---epochs=2000
---input_size=100
---j=9
---patience=20
---shortcut
---stack_size=3
---train=../data/eng_news/eng_news_30K_2007/train.txt
---validation=../data/eng_news/eng_news_30K_2007/validation.txt
