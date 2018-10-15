@@ -5,6 +5,7 @@ project("dali-examples")
 
 # additional cmake find files
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
+set(DALI_EXAMPLES_DATA_DIR "${PROJECT_SOURCE_DIR}/data")
 
 
 if (DEFINED ENV{DALI_HOME} AND NOT "$ENV{DALI_HOME}" STREQUAL "")
@@ -53,6 +54,7 @@ set(EXAMPLE_PROGRAMS # api_showcase
                      # visualizer
                      )
 message("DALI_AND_DEPS_LIBRARIES => " ${DALI_AND_DEPS_LIBRARIES})
+configure_file("${PROJECT_SOURCE_DIR}/examples/config.h.in" "${PROJECT_SOURCE_DIR}/examples/config.h")
 foreach(program ${EXAMPLE_PROGRAMS})
     add_executable(${program} ${EXAMPLES_DIR}/${program}.cpp)
     target_link_libraries(${program} utils ${DALI_AND_DEPS_LIBRARIES} ${GFLAGS_LIBRARIES})

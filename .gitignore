@@ -30,7 +30,7 @@ build_cpu/
 *.pem
 
 .ipynb_checkpoints/
-
+examples/config.h
 # Saves #
 #########
 saves/*
