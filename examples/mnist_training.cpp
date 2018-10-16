@@ -7,14 +7,13 @@
 #include <dali/tensor/layers/conv.h>
 #include <dali/utils/performance_report.h>
 #include <dali/utils/concatenate.h>
+#include <dali/utils/make_message.h>
 
 #include "utils.h"
 
 DEFINE_bool(use_cudnn, true, "Whether to use cudnn library for some GPU operations.");
 DEFINE_string(path, utils::dir_join({STR(DALI_EXAMPLES_DATA_DIR), "mnist"}), "Location of mnist data");
-
-using std::vector;
-using std::string;
+DEFINE_int32(batch_size, 256, "Batch size");
 
 struct MnistCnn {
     ConvLayer conv1;
@@ -23,8 +22,8 @@ struct MnistCnn {
     Layer     fc2;
 
     MnistCnn() {
-        conv1 = ConvLayer(32, 1,   5, 5);
-        conv2 = ConvLayer(64, 32,  5, 5);
+        conv1 = ConvLayer(32, 1, 5, 5);
+        conv2 = ConvLayer(64, 32, 5, 5);
         fc1 = Layer(7 * 7 * 64, 1024);
         fc2 = Layer(1024, 10);
     }
@@ -83,11 +82,10 @@ std::tuple<double, double> training_epoch(const MnistCnn& model,
                       Tensor labels,
                       int batch_size) {
     int num_images = images.shape()[0].value();
-    double epoch_error = 0;
     auto params = model.parameters();
-    double num_correct = 0;
-
-    for (int batch_start = 0; batch_start < images.shape()[0]; batch_start+=batch_size) {
+    Array num_correct(0, DTYPE_DOUBLE);
+    Array epoch_error(0, DTYPE_DOUBLE);
+    for (int batch_start = 0; batch_start < num_images; batch_start += batch_size) {
         auto batch_slice = Slice(batch_start, std::min(batch_start + batch_size, num_images));
         Tensor batch_images = images[batch_slice];
         Tensor batch_labels = labels[batch_slice];
@@ -95,20 +93,17 @@ std::tuple<double, double> training_epoch(const MnistCnn& model,
         Tensor probs = model.activate(batch_images, 0.5);
         Tensor error = tensor_ops::softmax_cross_entropy(probs, batch_labels);
         error.mean().grad();
-        std::cout << "got grad" << std::endl;
-        epoch_error += (double)(Array)error.w.sum();
-        std::cout << epoch_error << std::endl;
-        num_correct += (int)(Array)op::sum(op::equals(op::argmax(probs.w, -1), batch_labels.w));
-        std::cout << num_correct << std::endl;
+        error.w.eval();
+        epoch_error += error.w.sum();
+        epoch_error.eval();
+        num_correct += op::sum(op::equals(op::argmax(probs.w, -1), batch_labels.w));
+        num_correct.eval();
         graph::backward();
-        std::cout << "pre-step" << std::endl;
         solver->step(params);
-        std::cout << "post-step" << std::endl;
     }
-
     return std::make_tuple(
-        epoch_error / (double)num_images,
-        num_correct / (double)num_images
+        (double)epoch_error / (double)num_images,
+        (double)num_correct / (double)num_images
     );
 }
 
@@ -151,12 +146,13 @@ int main (int argc, char *argv[]) {
     }
 #ifdef DALI_USE_CUDA
     if (FLAGS_device >= 0) {
+        ASSERT2(FLAGS_device < Device::num_gpus(), utils::make_message("Cannot run on GPU ", FLAGS_device, ", only found ", Device::num_gpus(), " gpus."));
         default_preferred_device = Device::gpu(FLAGS_device);
     }
 #endif
     std::cout << "Running on " << default_preferred_device.description() << "." << std::endl;
     utils::random::set_seed(123123);
-    const int batch_size = 64;
+    const int batch_size = FLAGS_batch_size;
     WithCudnnPreference cudnn_pref(FLAGS_use_cudnn);
     std::cout << "Use CuDNN = " << (cudnn_preference() ? "True" : "False") << "." << std::endl;
     std::cout << "loading dataset from " << FLAGS_path << "." << std::endl;
