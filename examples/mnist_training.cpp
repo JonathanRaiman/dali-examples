@@ -5,6 +5,7 @@
 #include <dali/utils.h>
 #include <dali/tensor/op/spatial.h>
 #include <dali/tensor/layers/conv.h>
+#include <dali/array/jit/jit.h>
 #include <dali/utils/performance_report.h>
 #include <dali/utils/concatenate.h>
 #include <dali/utils/make_message.h>
@@ -12,6 +13,8 @@
 #include "utils.h"
 
 DEFINE_bool(use_cudnn, true, "Whether to use cudnn library for some GPU operations.");
+DEFINE_bool(use_jit_fusion, true, "Whether to use JIT Fusion.");
+DEFINE_bool(use_nchw, true, "Whether to use NCHW or NHWC.");
 DEFINE_string(path, utils::dir_join({STR(DALI_EXAMPLES_DATA_DIR), "mnist"}), "Location of mnist data");
 DEFINE_int32(batch_size, 256, "Batch size");
 
@@ -20,22 +23,23 @@ struct MnistCnn {
     ConvLayer conv2;
     Layer     fc1;
     Layer     fc2;
+    bool use_nchw_;
 
-    MnistCnn() {
-        conv1 = ConvLayer(32, 1, 5, 5);
-        conv2 = ConvLayer(64, 32, 5, 5);
+    MnistCnn(bool use_nchw) : use_nchw_(use_nchw) {
+        conv1 = ConvLayer(32, 1, 5, 5, 1, 1, PADDING_T_SAME, use_nchw ? "NCHW" : "NHWC");
+        conv2 = ConvLayer(64, 32, 5, 5, 1, 1, PADDING_T_SAME, use_nchw ? "NCHW" : "NHWC");
         fc1 = Layer(7 * 7 * 64, 1024);
         fc2 = Layer(1024, 10);
     }
 
     Tensor activate(Tensor images, float keep_prob) const {
-        images = images.reshape({-1, 1, 28, 28});
+        images = images.reshape(use_nchw_ ? shape_t{-1, 1, 28, 28} : shape_t{-1, 28, 28, 1});
         // shape (B, 1, 28, 28)
         Tensor out = conv1.activate(images).relu();
-        out = tensor_ops::max_pool(out, 2, 2);
+        out = tensor_ops::max_pool(out, 2, 2, -1, -1, PADDING_T_VALID, use_nchw_ ? "NCHW" : "NHWC");
         // shape (B, 32, 14, 14)
         out = conv2.activate(out).relu();
-        out = tensor_ops::max_pool(out, 2, 2);
+        out = tensor_ops::max_pool(out, 2, 2, -1, -1, PADDING_T_VALID, use_nchw_ ? "NCHW" : "NHWC");
         // shape (B, 64, 7, 7)
         out = out.reshape({out.shape()[0], 7 * 7 * 64});
         out = fc1.activate(out).relu();
@@ -93,13 +97,10 @@ std::tuple<double, double> training_epoch(const MnistCnn& model,
         Tensor probs = model.activate(batch_images, 0.5);
         Tensor error = tensor_ops::softmax_cross_entropy(probs, batch_labels);
         error.mean().grad();
-        error.w.eval();
         epoch_error += error.w.sum();
-        epoch_error.eval();
         num_correct += op::sum(op::equals(op::argmax(probs.w, -1), batch_labels.w));
-        num_correct.eval();
         graph::backward();
-        solver->step(params);
+        op::control_dependencies(solver->step(params), {num_correct, epoch_error}).eval();
     }
     return std::make_tuple(
         (double)epoch_error / (double)num_images,
@@ -154,14 +155,17 @@ int main (int argc, char *argv[]) {
     utils::random::set_seed(123123);
     const int batch_size = FLAGS_batch_size;
     WithCudnnPreference cudnn_pref(FLAGS_use_cudnn);
+    op::jit::WithJITFusionPreference jit_pref(FLAGS_use_jit_fusion);
     std::cout << "Use CuDNN = " << (cudnn_preference() ? "True" : "False") << "." << std::endl;
+    std::cout << "Use JIT Fusion = " << (op::jit::jit_fusion_preference() ? "True" : "False") << "." << std::endl;
+    std::cout << "Use NCHW = " << (FLAGS_use_nchw ? "True" : "False") << "." << std::endl;
     std::cout << "loading dataset from " << FLAGS_path << "." << std::endl;
     auto ds = load_dataset(FLAGS_path);
     std::cout << "DONE." << std::endl;
     Tensor train_x    = ds[0], train_y    = ds[1],
            validate_x = ds[2], validate_y = ds[3],
            test_x     = ds[4], test_y     = ds[5];
-    MnistCnn model;
+    MnistCnn model(FLAGS_use_nchw);
     auto params = model.parameters();
     auto solver = solver::construct("sgd", params, 0.01);
     solver->clip_norm_ = 0.0;
