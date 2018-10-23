@@ -6,9 +6,13 @@
 #include <dali/tensor/op/spatial.h>
 #include <dali/tensor/layers/conv.h>
 #include <dali/array/jit/jit.h>
+#include <dali/array/expression/computation.h>
+#include <dali/array/memory/synchronized_memory.h>
+#include <dali/array/memory/memory_bank.h>
 #include <dali/utils/performance_report.h>
 #include <dali/utils/concatenate.h>
 #include <dali/utils/make_message.h>
+#include <dali/utils/timer.h>
 
 #include "utils.h"
 
@@ -97,6 +101,7 @@ std::tuple<double, double> training_epoch(const MnistCnn& model,
         Tensor probs = model.activate(batch_images, 0.5);
         Tensor error = tensor_ops::softmax_cross_entropy(probs, batch_labels);
         error.mean().grad();
+        if (!FLAGS_use_jit_fusion) error.w.eval();
         epoch_error += error.w.sum();
         num_correct += op::sum(op::equals(op::argmax(probs.w, -1), batch_labels.w));
         graph::backward();
@@ -174,25 +179,40 @@ int main (int argc, char *argv[]) {
     PerformanceReport report;
     double epoch_error, epoch_correct;
 
-    for (int i = 0; i < 10; ++i) {
+    long prev_number_of_computations = number_of_computations();
+    long prev_number_of_allocations = memory::number_of_allocations();
+    long prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
+    long prev_actual_number_of_allocations = memory::bank::number_of_allocations();
+    long prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
+    for (int i = 0; i < 2; ++i) {
         auto epoch_start_time = std::chrono::system_clock::now();
 
-        report.start_capture();
+        // report.start_capture();
         std::tie(epoch_error, epoch_correct) = training_epoch(model, solver, train_x, train_y, batch_size);
-        report.stop_capture();
-        report.print();
-
+        // report.stop_capture();
+        // report.print();
         std::chrono::duration<double> epoch_duration
                 = (std::chrono::system_clock::now() - epoch_start_time);
-        auto validate_acc = accuracy(model, validate_x, validate_y, batch_size);
-
-        std::cout << "Epoch " << i
-                  << ", train:      " << 100.0 * epoch_correct
-                  << " (nll " << epoch_error << ")"
-                  << ", validation: " << 100.0 * validate_acc << '%'
-                  << ", time:       " << epoch_duration.count() << "s" << std::endl;
+        default_preferred_device.wait();
+        // auto validate_acc = accuracy(model, validate_x, validate_y, batch_size);
+        std::cout << epoch_duration.count()
+                  << " " << number_of_computations() - prev_number_of_computations
+                  << " " << memory::number_of_allocations() - prev_number_of_allocations
+                  << " " << memory::number_of_bytes_allocated() - prev_number_of_bytes_allocated
+                  << " " << memory::bank::number_of_allocations() - prev_actual_number_of_allocations
+                  << " " << memory::bank::number_of_bytes_allocated() - prev_actual_number_of_bytes_allocated
+                  << std::endl;
+        prev_number_of_computations = number_of_computations();
+        prev_number_of_allocations = memory::number_of_allocations();
+        prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
+        prev_actual_number_of_allocations = memory::bank::number_of_allocations();
+        prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
+        // std::cout << "Epoch " << i
+        //           << ", train:      " << 100.0 * epoch_correct
+        //           << " (nll " << epoch_error << ")"
+        //           << ", validation: " << 100.0 * validate_acc << '%'
+        //           << ", time:       " << epoch_duration.count() << "s" << std::endl;
     }
-
-    auto test_acc  = accuracy(model, test_x, test_y, batch_size);
-    std::cout << "Test accuracy: " << 100.0 * test_acc << '%' << std::endl;
+    // auto test_acc  = accuracy(model, test_x, test_y, batch_size);
+    // std::cout << "Test accuracy: " << 100.0 * test_acc << '%' << std::endl;
 }

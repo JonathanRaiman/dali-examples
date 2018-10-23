@@ -14,6 +14,7 @@ def build_model():
     y = tf.placeholder(tf.int32, [None])
     keep_prob = tf.placeholder(tf.float32, [])
     out = tf.reshape(x, [tf.shape(x)[0], 28, 28, 1])
+
     out = tf.contrib.layers.conv2d(out, 64, (5, 5), scope="conv1", padding="SAME", data_format="NHWC")
     out = tf.contrib.layers.max_pool2d(out, (2, 2), scope="pool1", padding="VALID", data_format="NHWC")
     out = tf.contrib.layers.conv2d(out, 64, (5, 5), scope="conv2", padding="SAME", data_format="NHWC")
@@ -38,7 +39,8 @@ def main():
     X = np.load(join(DATA_DIR, "mnist", "train_x.npy"))
     Y = np.load(join(DATA_DIR, "mnist", "train_y.npy"))
     batch_size = args.batch_size
-    for iteration in range(10):
+    print(len(X))
+    for iteration in range(101):
         t0 = time.time()
         for i in range(0, len(X), batch_size):
             _, batch_loss = sess.run((model.train_op, model.loss),
@@ -46,7 +48,7 @@ def main():
                                       model.input_y: Y[i:i + batch_size],
                                       model.keep_prob: 0.5})
         t1 = time.time()
-        print("Iteration %d, Elapsed %.3f" % (iteration, t1 - t0))
+        print("%.3f" % (t1 - t0))
 
 
 if __name__ == "__main__":

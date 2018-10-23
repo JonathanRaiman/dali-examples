@@ -51,6 +51,7 @@ set(EXAMPLE_PROGRAMS # api_showcase
                      # sparse_ner
                      # sparse_paraphrase
                      mnist_training
+                     small_fc
                      # visualizer
                      )
 message("DALI_AND_DEPS_LIBRARIES => " ${DALI_AND_DEPS_LIBRARIES})
