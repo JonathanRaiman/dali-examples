@@ -21,6 +21,7 @@ DEFINE_bool(use_jit_fusion, true, "Whether to use JIT Fusion.");
 DEFINE_bool(use_nchw, true, "Whether to use NCHW or NHWC.");
 DEFINE_string(path, utils::dir_join({STR(DALI_EXAMPLES_DATA_DIR), "mnist"}), "Location of mnist data");
 DEFINE_int32(batch_size, 256, "Batch size");
+DEFINE_int32(epochs, 2, "Epochs");
 
 struct MnistCnn {
     ConvLayer conv1;
@@ -58,7 +59,8 @@ struct MnistCnn {
         return utils::concatenate({conv1.parameters(),
                                    conv2.parameters(),
                                    fc1.parameters(),
-                                   fc2.parameters()});
+                                   fc2.parameters()
+                               });
     }
 };
 
@@ -184,9 +186,8 @@ int main (int argc, char *argv[]) {
     long prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
     long prev_actual_number_of_allocations = memory::bank::number_of_allocations();
     long prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < FLAGS_epochs; ++i) {
         auto epoch_start_time = std::chrono::system_clock::now();
-
         // report.start_capture();
         std::tie(epoch_error, epoch_correct) = training_epoch(model, solver, train_x, train_y, batch_size);
         // report.stop_capture();
@@ -201,6 +202,7 @@ int main (int argc, char *argv[]) {
                   << " " << memory::number_of_bytes_allocated() - prev_number_of_bytes_allocated
                   << " " << memory::bank::number_of_allocations() - prev_actual_number_of_allocations
                   << " " << memory::bank::number_of_bytes_allocated() - prev_actual_number_of_bytes_allocated
+                  << " " << num_expressions()
                   << std::endl;
         prev_number_of_computations = number_of_computations();
         prev_number_of_allocations = memory::number_of_allocations();

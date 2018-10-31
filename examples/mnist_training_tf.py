@@ -34,8 +34,11 @@ def main():
     parser.add_argument("--batch_size", default=256, type=int)
     args = parser.parse_args()
     model = build_model()
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
     sess = tf.InteractiveSession()
     sess.run(tf.global_variables_initializer())
+
     X = np.load(join(DATA_DIR, "mnist", "train_x.npy"))
     Y = np.load(join(DATA_DIR, "mnist", "train_y.npy"))
     batch_size = args.batch_size
