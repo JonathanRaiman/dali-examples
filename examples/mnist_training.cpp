@@ -19,6 +19,7 @@
 DEFINE_bool(use_cudnn, true, "Whether to use cudnn library for some GPU operations.");
 DEFINE_bool(use_jit_fusion, true, "Whether to use JIT Fusion.");
 DEFINE_bool(use_nchw, true, "Whether to use NCHW or NHWC.");
+DEFINE_bool(record_dali_events, false, "Whether to use PerformanceReport to record events in Dali.");
 DEFINE_string(path, utils::dir_join({STR(DALI_EXAMPLES_DATA_DIR), "mnist"}), "Location of mnist data");
 DEFINE_int32(batch_size, 256, "Batch size");
 DEFINE_int32(epochs, 2, "Epochs");
@@ -108,15 +109,6 @@ std::tuple<double, double> training_epoch(const MnistCnn& model,
         num_correct += op::sum(op::equals(op::argmax(probs.w, -1), batch_labels.w));
         graph::backward();
         op::control_dependencies(solver->step(params), {num_correct, epoch_error}).eval();
-        // TODO:fix the bug where source still contains data after computation
-        for (auto& p : params) {
-            if (!p.w.source().is_stateless()) {
-                p.w.source().eval();
-            }
-            if (!p.dw.source().is_stateless()) {
-                p.dw.source().eval();
-            }
-        }
         break;
     }
     return std::make_tuple(
@@ -207,10 +199,12 @@ int main (int argc, char *argv[]) {
 
     for (int i = 0; i < FLAGS_epochs; ++i) {
         auto epoch_start_time = std::chrono::system_clock::now();
-        // report.start_capture();
+        if (FLAGS_record_dali_events) report.start_capture();
         std::tie(epoch_error, epoch_correct) = training_epoch(model, solver, train_x, train_y, batch_size);
-        // report.stop_capture();
-        // report.print();
+        if (FLAGS_record_dali_events) {
+            report.stop_capture();
+            report.print();
+        }
         std::chrono::duration<double> epoch_duration
                 = (std::chrono::system_clock::now() - epoch_start_time);
         default_preferred_device.wait();
@@ -233,33 +227,6 @@ int main (int argc, char *argv[]) {
         } else {
             utils::draw_expression_ownership_graph("ownership.gv", existing_expressions());
         }
-        //     std::vector<const Expression*> unique_extra_els;
-        //     for (auto& v : existing_expressions()) {
-        //         bool is_contained = false;
-        //         for (auto& ov : existing_expressions()) {
-        //             if (v != ov) {
-        //                 if (expression_contains(ov, v)) {
-        //                     is_contained = true;
-        //                     break;
-        //                 }
-        //             }
-        //         }
-        //         if (!is_contained) {
-        //             unique_extra_els.emplace_back(v);
-        //         }
-        //     }
-
-        //     for (auto& v : unique_extra_els) {
-        //         std::cout << v->pretty_print_name(nullptr) << std::endl;
-        //         std::cout << v->shape_ << std::endl;
-        //     }
-        //     for (auto& p : model.parameters()) {
-        //         std::cout << p.dw.source().name() << std::endl;
-        //         std::cout << p.w.source().name() << std::endl;
-        //     }
-        //     ELOG(train_x.dw.source().name());
-        //     ELOG(train_y.dw.source().name());
-        // }
         // std::cout << "Epoch " << i
         //           << ", train:      " << 100.0 * epoch_correct
         //           << " (nll " << epoch_error << ")"

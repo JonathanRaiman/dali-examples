@@ -63,7 +63,7 @@ namespace utils {
     }
 
     namespace {
-        void recursive_print_expression_ownership(std::ofstream& out, const Expression* expression, std::unordered_map<const Expression*, int>& names, int indent) {
+        void recursive_print_expression_ownership(std::ofstream& out, const Expression* expression, std::unordered_map<const void*, int>& names, int indent) {
             if (names.find(expression) != names.end()) {
                 return;
             }
@@ -74,9 +74,19 @@ namespace utils {
                 recursive_print_expression_ownership(out, arg.get(), names, indent);
                 out << std::string(indent, ' ') << "node" << name << " -> " << "node" << names.at(arg.get()) << " [color=gray];\n";
             }
-            if (!expression->source().is_stateless()) {
-                recursive_print_expression_ownership(out, expression->source().expression().get(), names, indent);
-                out << std::string(indent, ' ') << "node" << name << " -> " << "node" << names.at(expression->source().expression().get()) << " [color=blue,label=\"source\"];\n";
+            auto& source_group = expression->source_group();
+            if (names.find(source_group.get()) != names.end()) {
+                return;
+            }
+            name = names.size();
+            names.emplace(source_group.get(), name);
+            out << std::string(indent, ' ') << "node" << name << " [shape=circle,label=\"Source Group\"];\n";
+            for (auto& arg : source_group->weak_arrays_) {
+                auto v = arg.second.lock();
+                if (v != nullptr) {
+                    recursive_print_expression_ownership(out, v->expression_.get(), names, indent);
+                }
+                out << std::string(indent, ' ') << "node" << name << " -> " << "node" << names.at(v->expression_.get()) << " [color=blue,label=\"source\"];\n";
             }
         }
     }
@@ -88,7 +98,7 @@ namespace utils {
             exit(EXIT_FAILURE);
         }
         out_dot << "digraph G {\n";
-        std::unordered_map<const Expression*, int> names;
+        std::unordered_map<const void*, int> names;
         for (auto& expression : expressions) {
             recursive_print_expression_ownership(out_dot, expression, names, 4);
         }
