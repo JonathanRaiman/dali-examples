@@ -61,4 +61,40 @@ namespace utils {
             ASSERT2(device_name >= -1, "update_device's device_name argument must be >= -1");
         }
     }
+
+    namespace {
+        void recursive_print_expression_ownership(std::ofstream& out, const Expression* expression, std::unordered_map<const Expression*, int>& names, int indent) {
+            if (names.find(expression) != names.end()) {
+                return;
+            }
+            int name = names.size();
+            names.emplace(expression, name);
+            out << std::string(indent, ' ') << "node" << name << " [shape=box,label=\"" << expression->name() << "\"];\n";
+            for (auto& arg : expression->arguments()) {
+                recursive_print_expression_ownership(out, arg.get(), names, indent);
+                out << std::string(indent, ' ') << "node" << name << " -> " << "node" << names.at(arg.get()) << " [color=gray];\n";
+            }
+            if (!expression->source().is_stateless()) {
+                recursive_print_expression_ownership(out, expression->source().expression().get(), names, indent);
+                out << std::string(indent, ' ') << "node" << name << " -> " << "node" << names.at(expression->source().expression().get()) << " [color=blue,label=\"source\"];\n";
+            }
+        }
+    }
+
+    void draw_expression_ownership_graph(const std::string& fname, const std::unordered_set<const Expression*>& expressions) {
+        std::ofstream out_dot(fname, std::ofstream::out);
+        if (out_dot.bad()) {
+            std::cout << "cannot open " << fname << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        out_dot << "digraph G {\n";
+        std::unordered_map<const Expression*, int> names;
+        for (auto& expression : expressions) {
+            recursive_print_expression_ownership(out_dot, expression, names, 4);
+        }
+        out_dot << "}\n";
+        out_dot.flush();
+        out_dot.close();
+    }
+
 }

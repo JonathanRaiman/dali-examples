@@ -87,10 +87,10 @@ double accuracy(const MnistCnn& model, Tensor images, Tensor labels, int batch_s
 }
 
 std::tuple<double, double> training_epoch(const MnistCnn& model,
-                      std::shared_ptr<solver::AbstractSolver> solver,
-                      Tensor images,
-                      Tensor labels,
-                      int batch_size) {
+                                          std::shared_ptr<solver::AbstractSolver> solver,
+                                          Tensor images,
+                                          Tensor labels,
+                                          int batch_size) {
     int num_images = images.shape()[0].value();
     auto params = model.parameters();
     Array num_correct(0, DTYPE_DOUBLE);
@@ -108,6 +108,16 @@ std::tuple<double, double> training_epoch(const MnistCnn& model,
         num_correct += op::sum(op::equals(op::argmax(probs.w, -1), batch_labels.w));
         graph::backward();
         op::control_dependencies(solver->step(params), {num_correct, epoch_error}).eval();
+        // TODO:fix the bug where source still contains data after computation
+        for (auto& p : params) {
+            if (!p.w.source().is_stateless()) {
+                p.w.source().eval();
+            }
+            if (!p.dw.source().is_stateless()) {
+                p.dw.source().eval();
+            }
+        }
+        break;
     }
     return std::make_tuple(
         (double)epoch_error / (double)num_images,
@@ -140,6 +150,14 @@ std::vector<Tensor> load_dataset(const std::string& path) {
             test_x,     test_y};
 }
 
+
+bool expression_contains(const Expression* root, const Expression* child) {
+    if (root == child) return true;
+    for (auto& arg : root->arguments()) {
+        if (expression_contains(arg.get(), child)) { return true;}
+    }
+    return false;
+}
 
 int main (int argc, char *argv[]) {
     GFLAGS_NAMESPACE::SetUsageMessage(
@@ -186,6 +204,7 @@ int main (int argc, char *argv[]) {
     long prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
     long prev_actual_number_of_allocations = memory::bank::number_of_allocations();
     long prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
+
     for (int i = 0; i < FLAGS_epochs; ++i) {
         auto epoch_start_time = std::chrono::system_clock::now();
         // report.start_capture();
@@ -209,6 +228,38 @@ int main (int argc, char *argv[]) {
         prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
         prev_actual_number_of_allocations = memory::bank::number_of_allocations();
         prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
+        if (i <= 1) {
+            // existing = existing_expressions();
+        } else {
+            utils::draw_expression_ownership_graph("ownership.gv", existing_expressions());
+        }
+        //     std::vector<const Expression*> unique_extra_els;
+        //     for (auto& v : existing_expressions()) {
+        //         bool is_contained = false;
+        //         for (auto& ov : existing_expressions()) {
+        //             if (v != ov) {
+        //                 if (expression_contains(ov, v)) {
+        //                     is_contained = true;
+        //                     break;
+        //                 }
+        //             }
+        //         }
+        //         if (!is_contained) {
+        //             unique_extra_els.emplace_back(v);
+        //         }
+        //     }
+
+        //     for (auto& v : unique_extra_els) {
+        //         std::cout << v->pretty_print_name(nullptr) << std::endl;
+        //         std::cout << v->shape_ << std::endl;
+        //     }
+        //     for (auto& p : model.parameters()) {
+        //         std::cout << p.dw.source().name() << std::endl;
+        //         std::cout << p.w.source().name() << std::endl;
+        //     }
+        //     ELOG(train_x.dw.source().name());
+        //     ELOG(train_y.dw.source().name());
+        // }
         // std::cout << "Epoch " << i
         //           << ", train:      " << 100.0 * epoch_correct
         //           << " (nll " << epoch_error << ")"
