@@ -32,6 +32,7 @@ def build_model():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=256, type=int)
+    parser.add_argument("--epochs", default=10, type=int)
     args = parser.parse_args()
     model = build_model()
     config = tf.ConfigProto()
@@ -43,7 +44,7 @@ def main():
     Y = np.load(join(DATA_DIR, "mnist", "train_y.npy"))
     batch_size = args.batch_size
     print(len(X))
-    for iteration in range(101):
+    for iteration in range(args.epochs):
         t0 = time.time()
         for i in range(0, len(X), batch_size):
             _, batch_loss = sess.run((model.train_op, model.loss),

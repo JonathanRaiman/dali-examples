@@ -87,7 +87,7 @@ double accuracy(const MnistCnn& model, Tensor images, Tensor labels, int batch_s
     return (Array)(num_correct.astype(DTYPE_DOUBLE) / num_images);
 }
 
-std::tuple<double, double> training_epoch(const MnistCnn& model,
+std::tuple<Array, Array> training_epoch(const MnistCnn& model,
                                           std::shared_ptr<solver::AbstractSolver> solver,
                                           Tensor images,
                                           Tensor labels,
@@ -106,15 +106,11 @@ std::tuple<double, double> training_epoch(const MnistCnn& model,
         error.mean().grad();
         if (!FLAGS_use_jit_fusion) error.w.eval();
         epoch_error += error.w.sum();
-        num_correct += op::sum(op::equals(op::argmax(probs.w, -1), batch_labels.w));
+        // num_correct += op::sum(op::equals(op::argmax(probs.w, -1), batch_labels.w));
         graph::backward();
         op::control_dependencies(solver->step(params), {num_correct, epoch_error}).eval();
-        break;
     }
-    return std::make_tuple(
-        (double)epoch_error / (double)num_images,
-        (double)num_correct / (double)num_images
-    );
+    return std::make_tuple(epoch_error / (double)num_images, num_correct / (double)num_images);
 }
 
 
@@ -189,7 +185,7 @@ int main (int argc, char *argv[]) {
     solver->clip_abs_  = 0.0;
 
     PerformanceReport report;
-    double epoch_error, epoch_correct;
+    Array epoch_error, epoch_correct;
 
     long prev_number_of_computations = number_of_computations();
     long prev_number_of_allocations = memory::number_of_allocations();
@@ -215,18 +211,17 @@ int main (int argc, char *argv[]) {
                   << " " << memory::number_of_bytes_allocated() - prev_number_of_bytes_allocated
                   << " " << memory::bank::number_of_allocations() - prev_actual_number_of_allocations
                   << " " << memory::bank::number_of_bytes_allocated() - prev_actual_number_of_bytes_allocated
-                  << " " << num_expressions()
                   << std::endl;
         prev_number_of_computations = number_of_computations();
         prev_number_of_allocations = memory::number_of_allocations();
         prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
         prev_actual_number_of_allocations = memory::bank::number_of_allocations();
         prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
-        if (i <= 1) {
-            // existing = existing_expressions();
-        } else {
-            utils::draw_expression_ownership_graph("ownership.gv", existing_expressions());
-        }
+        // if (i <= 1) {
+        //     // existing = existing_expressions();
+        // } else {
+        //     utils::draw_expression_ownership_graph("ownership.gv", existing_expressions());
+        // }
         // std::cout << "Epoch " << i
         //           << ", train:      " << 100.0 * epoch_correct
         //           << " (nll " << epoch_error << ")"
