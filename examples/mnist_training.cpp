@@ -138,32 +138,19 @@ std::vector<Tensor> load_dataset(const std::string& path) {
             test_x,     test_y};
 }
 
-
-bool expression_contains(const Expression* root, const Expression* child) {
-    if (root == child) return true;
-    for (auto& arg : root->arguments()) {
-        if (expression_contains(arg.get(), child)) { return true;}
-    }
-    return false;
-}
-
 int main (int argc, char *argv[]) {
     GFLAGS_NAMESPACE::SetUsageMessage(
-        "\n"
         "MNIST training using simple convnet\n"
-        "------------------------------------\n"
-    );
+        "------------------------------------\n");
     GFLAGS_NAMESPACE::ParseCommandLineFlags(&argc, &argv, true);
 
     if (FLAGS_device == -1) {
         default_preferred_device = Device::cpu();
     }
-#ifdef DALI_USE_CUDA
     if (FLAGS_device >= 0) {
         ASSERT2(FLAGS_device < Device::num_gpus(), utils::make_message("Cannot run on GPU ", FLAGS_device, ", only found ", Device::num_gpus(), " gpus."));
         default_preferred_device = Device::gpu(FLAGS_device);
     }
-#endif
     std::cout << "Running on " << default_preferred_device.description() << "." << std::endl;
     utils::random::set_seed(123123);
     const int batch_size = FLAGS_batch_size;
@@ -217,11 +204,6 @@ int main (int argc, char *argv[]) {
         prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
         prev_actual_number_of_allocations = memory::bank::number_of_allocations();
         prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
-        // if (i <= 1) {
-        //     // existing = existing_expressions();
-        // } else {
-        //     utils::draw_expression_ownership_graph("ownership.gv", existing_expressions());
-        // }
         // std::cout << "Epoch " << i
         //           << ", train:      " << 100.0 * epoch_correct
         //           << " (nll " << epoch_error << ")"
