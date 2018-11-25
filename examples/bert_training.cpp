@@ -462,11 +462,15 @@ int main (int argc, char *argv[]) {
 
     BertModel model(config, DTYPE_FLOAT);
 
-    auto res = model.activate(Tensor::zeros({100, 10}, DTYPE_INT32),
-                              Tensor::zeros({100, 10}, DTYPE_INT32),
-                              Tensor::ones({100, 10}, DTYPE_INT32),
-                              false);
-    std::get<1>(res).print();
+    for (int i = 0; i < 100; i++) {
+        graph::NoBackprop nb;
+        auto res = model.activate(Tensor::zeros({100, 10}, DTYPE_INT32),
+                                  Tensor::zeros({100, 10}, DTYPE_INT32),
+                                  Tensor::ones({100, 10}, DTYPE_INT32),
+                                  false);
+        ELOG(i);
+        std::get<1>(res).w.eval();
+    }
 
     // BidirectionalTransformer model;
     // auto params = model.parameters();
