@@ -462,7 +462,7 @@ int main (int argc, char *argv[]) {
 
     BertModel model(config, DTYPE_FLOAT);
 
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 1; i++) {
         graph::NoBackprop nb;
         auto res = model.activate(Tensor::zeros({100, 10}, DTYPE_INT32),
                                   Tensor::zeros({100, 10}, DTYPE_INT32),

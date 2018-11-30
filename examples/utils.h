@@ -18,7 +18,7 @@ DECLARE_string(visualizer);
 DECLARE_int32(device);
 
 namespace utils {
-    void map_to_file(const std::unordered_map<std::string, str_sequence>&, const std::string&);
+    void map_to_file(const std::unordered_map<std::string, std::vector<std::string>>&, const std::string&);
 
     template<typename T>
     std::vector<T> normalize_weights(const std::vector<T>& weights);
