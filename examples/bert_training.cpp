@@ -17,8 +17,8 @@
 #include "utils.h"
 
 DEFINE_bool(use_jit_fusion, true, "Whether to use JIT Fusion.");
-DEFINE_int32(batch_size, 256, "Batch size");
-DEFINE_int32(epochs, 2, "Epochs");
+DEFINE_int32(batch_size, 100, "Batch size");
+DEFINE_int32(epochs, 1, "Epochs");
 
 // BERT implementation adapted from https://github.com/huggingface/pytorch-pretrained-BERT's PyTorch implementation
 
@@ -55,7 +55,7 @@ struct BertLayerNorm : public AbstractLayer {
         auto x_zeroed = (x - u);
         auto s = x_zeroed.square().mean({-1}, /*keepdims=*/true);
         auto x_norm = x_zeroed / (s + variance_epsilon_).sqrt();
-        return gamma_[NewAxis()][NewAxis()] * x + beta_[NewAxis()][NewAxis()];
+        return gamma_[NewAxis()][NewAxis()] * x_norm + beta_[NewAxis()][NewAxis()];
     }
 
     virtual std::vector<Tensor> parameters() const {return {gamma_, beta_};}
@@ -461,49 +461,33 @@ int main (int argc, char *argv[]) {
     config.hidden_act = "gelu";
 
     BertModel model(config, DTYPE_FLOAT);
+    long prev_number_of_computations = number_of_computations();
+    long prev_number_of_allocations = memory::number_of_allocations();
+    long prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
+    long prev_actual_number_of_allocations = memory::bank::number_of_allocations();
+    long prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
 
-    for (int i = 0; i < 1; i++) {
+    for (int i = 0; i < FLAGS_epochs; i++) {
         graph::NoBackprop nb;
-        auto res = model.activate(Tensor::zeros({100, 10}, DTYPE_INT32),
-                                  Tensor::zeros({100, 10}, DTYPE_INT32),
-                                  Tensor::ones({100, 10}, DTYPE_INT32),
+        auto epoch_start_time = std::chrono::system_clock::now();
+        auto res = model.activate(Tensor::zeros({batch_size, 10}, DTYPE_INT32),
+                                  Tensor::zeros({batch_size, 10}, DTYPE_INT32),
+                                  Tensor::ones({batch_size, 10}, DTYPE_INT32),
                                   false);
-        ELOG(i);
         std::get<1>(res).w.eval();
+        default_preferred_device.wait();
+        std::chrono::duration<double> epoch_duration = (std::chrono::system_clock::now() - epoch_start_time);
+        std::cout << epoch_duration.count()
+              << " " << number_of_computations() - prev_number_of_computations
+              << " " << memory::number_of_allocations() - prev_number_of_allocations
+              << " " << memory::number_of_bytes_allocated() - prev_number_of_bytes_allocated
+              << " " << memory::bank::number_of_allocations() - prev_actual_number_of_allocations
+              << " " << memory::bank::number_of_bytes_allocated() - prev_actual_number_of_bytes_allocated
+              << std::endl;
+        prev_number_of_computations = number_of_computations();
+        prev_number_of_allocations = memory::number_of_allocations();
+        prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
+        prev_actual_number_of_allocations = memory::bank::number_of_allocations();
+        prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
     }
-
-    // BidirectionalTransformer model;
-    // auto params = model.parameters();
-    // auto solver = solver::construct("sgd", params, 0.01);
-    // solver->clip_norm_ = 0.0;
-    // solver->clip_abs_  = 0.0;
-
-    // PerformanceReport report;
-    // Array epoch_error, epoch_correct;
-
-    // long prev_number_of_computations = number_of_computations();
-    // long prev_number_of_allocations = memory::number_of_allocations();
-    // long prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
-    // long prev_actual_number_of_allocations = memory::bank::number_of_allocations();
-    // long prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
-
-    // for (int i = 0; i < FLAGS_epochs; ++i) {
-    //     auto epoch_start_time = std::chrono::system_clock::now();
-    //     std::tie(epoch_error, epoch_correct) = training_epoch(model, solver, train_x, train_y, batch_size);
-    //     std::chrono::duration<double> epoch_duration
-    //             = (std::chrono::system_clock::now() - epoch_start_time);
-    //     default_preferred_device.wait();
-    //     std::cout << epoch_duration.count()
-    //               << " " << number_of_computations() - prev_number_of_computations
-    //               << " " << memory::number_of_allocations() - prev_number_of_allocations
-    //               << " " << memory::number_of_bytes_allocated() - prev_number_of_bytes_allocated
-    //               << " " << memory::bank::number_of_allocations() - prev_actual_number_of_allocations
-    //               << " " << memory::bank::number_of_bytes_allocated() - prev_actual_number_of_bytes_allocated
-    //               << std::endl;
-    //     prev_number_of_computations = number_of_computations();
-    //     prev_number_of_allocations = memory::number_of_allocations();
-    //     prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
-    //     prev_actual_number_of_allocations = memory::bank::number_of_allocations();
-    //     prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
-    // }
 }
