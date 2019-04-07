@@ -19,6 +19,8 @@
 DEFINE_bool(use_jit_fusion, true, "Whether to use JIT Fusion.");
 DEFINE_int32(batch_size, 100, "Batch size");
 DEFINE_int32(epochs, 1, "Epochs");
+DEFINE_int32(timesteps, 10, "Timesteps");
+DEFINE_int32(max_fusion_arguments, 3, "Max fusion arguments");
 
 // BERT implementation adapted from https://github.com/huggingface/pytorch-pretrained-BERT's PyTorch implementation
 
@@ -445,10 +447,12 @@ int main (int argc, char *argv[]) {
         ASSERT2(FLAGS_device < Device::num_gpus(), utils::make_message("Cannot run on GPU ", FLAGS_device, ", only found ", Device::num_gpus(), " gpus."));
         default_preferred_device = Device::gpu(FLAGS_device);
     }
+    ASSERT2(FLAGS_timesteps > 0, utils::make_message("Timesteps argument must be strictly positive (got ", FLAGS_timesteps, ")."));
     std::cout << "Running on " << default_preferred_device.description() << "." << std::endl;
     utils::random::set_seed(123123);
     const int batch_size = FLAGS_batch_size;
     op::jit::WithJITFusionPreference jit_pref(FLAGS_use_jit_fusion);
+    op::jit::WithJITMaxArguments jit_max_args(FLAGS_max_fusion_arguments);
     std::cout << "Use JIT Fusion = " << (op::jit::jit_fusion_preference() ? "True" : "False") << "." << std::endl;
     std::cout << "DONE." << std::endl;
 
@@ -470,9 +474,9 @@ int main (int argc, char *argv[]) {
     for (int i = 0; i < FLAGS_epochs; i++) {
         graph::NoBackprop nb;
         auto epoch_start_time = std::chrono::system_clock::now();
-        auto res = model.activate(Tensor::zeros({batch_size, 10}, DTYPE_INT32),
-                                  Tensor::zeros({batch_size, 10}, DTYPE_INT32),
-                                  Tensor::ones({batch_size, 10}, DTYPE_INT32),
+        auto res = model.activate(Tensor::zeros({batch_size, FLAGS_timesteps}, DTYPE_INT32),
+                                  Tensor::zeros({batch_size, FLAGS_timesteps}, DTYPE_INT32),
+                                  Tensor::ones({batch_size, FLAGS_timesteps}, DTYPE_INT32),
                                   false);
         std::get<1>(res).w.eval();
         default_preferred_device.wait();
