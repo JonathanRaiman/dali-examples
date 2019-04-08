@@ -20,6 +20,7 @@ DEFINE_bool(use_jit_fusion, true, "Whether to use JIT Fusion.");
 DEFINE_int32(batch_size, 100, "Batch size");
 DEFINE_int32(epochs, 1, "Epochs");
 DEFINE_int32(timesteps, 10, "Timesteps");
+DEFINE_int32(hidden_layers, 8, "Hidden layers");
 DEFINE_int32(max_fusion_arguments, 3, "Max fusion arguments");
 
 // BERT implementation adapted from https://github.com/huggingface/pytorch-pretrained-BERT's PyTorch implementation
@@ -128,7 +129,6 @@ struct BertSelfAttention : public AbstractLayer {
         auto query_layer = transpose_for_scores(mixed_query_layer);
         auto key_layer = transpose_for_scores(mixed_key_layer);
         auto value_layer = transpose_for_scores(mixed_value_layer);
-
         // Take the dot product between "query" and "key" to get the raw attention scores.
         auto attention_scores = tensor_ops::matmul(query_layer, key_layer.swapaxes(-1, -2));
         // TODO(jonathan): the output of matmul is different than pyTorch's expected broadcasting
@@ -448,6 +448,7 @@ int main (int argc, char *argv[]) {
         default_preferred_device = Device::gpu(FLAGS_device);
     }
     ASSERT2(FLAGS_timesteps > 0, utils::make_message("Timesteps argument must be strictly positive (got ", FLAGS_timesteps, ")."));
+    ASSERT2(FLAGS_hidden_layers > 0, utils::make_message("Hidden layers argument must be strictly positive (got ", FLAGS_hidden_layers, ")."));
     std::cout << "Running on " << default_preferred_device.description() << "." << std::endl;
     utils::random::set_seed(123123);
     const int batch_size = FLAGS_batch_size;
@@ -457,7 +458,7 @@ int main (int argc, char *argv[]) {
     std::cout << "DONE." << std::endl;
 
     BertConfig config;
-    config.num_hidden_layers = 8;
+    config.num_hidden_layers = FLAGS_hidden_layers;
     config.num_attention_heads = 4;
     config.intermediate_size = 1024;
     config.hidden_size = 512;
