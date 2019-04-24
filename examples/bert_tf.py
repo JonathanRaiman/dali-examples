@@ -266,9 +266,9 @@ def bert_model(config, input_ids, token_type_ids, attention_mask, output_all_enc
     return (encoded_layers, pooled_output)
 
 
-def build_model():
+def build_model(hidden_layers):
     config = BertConfig(
-        num_hidden_layers=8,
+        num_hidden_layers=hidden_layers,
         num_attention_heads=4,
         intermediate_size=1024,
         hidden_size=512,
@@ -286,8 +286,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=100, type=int)
     parser.add_argument("--epochs", default=10, type=int)
+    parser.add_argument("--hidden_layers", default=8, type=int)
+    parser.add_argument("--timesteps", default=10, type=int)
     args = parser.parse_args()
-    model = build_model()
+    model = build_model(args.hidden_layers)
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     sess = tf.InteractiveSession()
@@ -296,9 +298,9 @@ def main():
     for iteration in range(args.epochs):
         t0 = time.time()
         sess.run(model.output,
-                 {model.input_ids: np.zeros((args.batch_size, 10), dtype=np.int32),
-                  model.token_type_ids: np.zeros((args.batch_size, 10), dtype=np.int32),
-                  model.attention_mask: np.ones((args.batch_size, 10), dtype=np.int32)})
+                 {model.input_ids: np.zeros((args.batch_size, args.timesteps), dtype=np.int32),
+                  model.token_type_ids: np.zeros((args.batch_size, args.timesteps), dtype=np.int32),
+                  model.attention_mask: np.ones((args.batch_size, args.timesteps), dtype=np.int32)})
         t1 = time.time()
         print("%.3f" % (t1 - t0))
 
