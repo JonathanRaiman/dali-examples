@@ -480,7 +480,7 @@ int main (int argc, char *argv[]) {
                                   Tensor::ones({batch_size, FLAGS_timesteps}, DTYPE_INT32),
                                   false);
         std::get<1>(res).w.eval();
-        default_preferred_device.wait();
+        std::get<1>(res).w.to_device(Device::cpu());
         std::chrono::duration<double> epoch_duration = (std::chrono::system_clock::now() - epoch_start_time);
         std::cout << epoch_duration.count()
               << " " << number_of_computations() - prev_number_of_computations
@@ -495,4 +495,6 @@ int main (int argc, char *argv[]) {
         prev_actual_number_of_allocations = memory::bank::number_of_allocations();
         prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
     }
+    optimization_report();
+    utils::Timer::report();
 }
