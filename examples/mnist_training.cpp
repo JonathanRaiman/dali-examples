@@ -23,6 +23,7 @@ DEFINE_bool(record_dali_events, false, "Whether to use PerformanceReport to reco
 DEFINE_string(path, utils::dir_join({STR(DALI_EXAMPLES_DATA_DIR), "mnist"}), "Location of mnist data");
 DEFINE_int32(batch_size, 256, "Batch size");
 DEFINE_int32(epochs, 2, "Epochs");
+DEFINE_int32(max_fusion_arguments, 3, "Max fusion arguments");
 
 struct MnistCnn {
     ConvLayer conv1;
@@ -156,6 +157,7 @@ int main (int argc, char *argv[]) {
     const int batch_size = FLAGS_batch_size;
     WithCudnnPreference cudnn_pref(FLAGS_use_cudnn);
     op::jit::WithJITFusionPreference jit_pref(FLAGS_use_jit_fusion);
+    op::jit::WithJITMaxArguments jit_max_args(FLAGS_max_fusion_arguments);
     std::cout << "Use CuDNN = " << (cudnn_preference() ? "True" : "False") << "." << std::endl;
     std::cout << "Use JIT Fusion = " << (op::jit::jit_fusion_preference() ? "True" : "False") << "." << std::endl;
     std::cout << "Use NCHW = " << (FLAGS_use_nchw ? "True" : "False") << "." << std::endl;
