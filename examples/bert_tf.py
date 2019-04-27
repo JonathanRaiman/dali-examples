@@ -5,7 +5,9 @@ import tensorflow.contrib.layers as layers
 import numpy as np
 from os.path import realpath, join, dirname
 import time
-BertModel = namedtuple("BertModel", "input_ids token_type_ids attention_mask output")
+from argparse_utils import add_bool_flag
+
+BertModel = namedtuple("BertModel", "input_ids token_type_ids attention_mask output labels train_op loss")
 SCRIPT_DIR = dirname(realpath(__file__))
 DATA_DIR = join(dirname(SCRIPT_DIR), "data")
 
@@ -278,8 +280,34 @@ def build_model(hidden_layers):
     input_ids = tf.placeholder(tf.int32, [None, None])
     token_type_ids = tf.placeholder(tf.int32, [None, None])
     attention_mask = tf.placeholder(tf.int32, [None, None])
-    _, output = bert_model(config, input_ids, token_type_ids, attention_mask, False)
-    return BertModel(input_ids, token_type_ids, attention_mask, output)
+    labels = tf.placeholder(tf.int32, [None, None])
+    (last_layer,), output = bert_model(config, input_ids, token_type_ids, attention_mask, False)
+
+    predictions = tf.contrib.layers.fully_connected(last_layer, config.vocab_size, activation_fn=None)
+    loss = tf.losses.sparse_softmax_cross_entropy(logits=predictions, labels=labels)
+    mean_loss = tf.reduce_mean(loss)
+    train_op = tf.train.GradientDescentOptimizer(0.01).minimize(mean_loss)
+    loss = tf.reduce_sum(loss)
+    return BertModel(input_ids, token_type_ids, attention_mask, output, labels, train_op, loss)
+
+
+def training_epoch(session, model, input_ids, token_type_ids, attention_mask, batch_size):
+    num_examples = len(input_ids)
+    num_correct = 0.0
+    epoch_error = 0.0
+    for batch_start in range(0, num_examples, batch_size):
+        batch_slice = slice(batch_start, min(batch_start + batch_size, num_examples))
+        batch_input_ids = input_ids[batch_slice]
+        batch_token_type_ids = token_type_ids[batch_slice]
+        batch_attention_mask = attention_mask[batch_slice]
+        _, batch_loss = session.run(
+            (model.train_op, model.loss),
+            {model.input_ids: batch_input_ids,
+             model.labels: batch_input_ids,
+             model.token_type_ids: batch_token_type_ids,
+             model.attention_mask: batch_attention_mask})
+        epoch_error += batch_loss
+    return epoch_error / num_examples, num_correct / num_examples
 
 
 def main():
@@ -288,6 +316,7 @@ def main():
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--hidden_layers", default=8, type=int)
     parser.add_argument("--timesteps", default=10, type=int)
+    add_bool_flag(parser, "inference_only", True)
     args = parser.parse_args()
     model = build_model(args.hidden_layers)
     config = tf.ConfigProto()
@@ -297,10 +326,18 @@ def main():
 
     for iteration in range(args.epochs):
         t0 = time.time()
-        sess.run(model.output,
-                 {model.input_ids: np.zeros((args.batch_size, args.timesteps), dtype=np.int32),
-                  model.token_type_ids: np.zeros((args.batch_size, args.timesteps), dtype=np.int32),
-                  model.attention_mask: np.ones((args.batch_size, args.timesteps), dtype=np.int32)})
+        if args.inference_only:
+            sess.run(model.output,
+                     {model.input_ids: np.zeros((args.batch_size, args.timesteps), dtype=np.int32),
+                      model.token_type_ids: np.zeros((args.batch_size, args.timesteps), dtype=np.int32),
+                      model.attention_mask: np.ones((args.batch_size, args.timesteps), dtype=np.int32)})
+        else:
+            training_epoch(session=sess,
+                           model=model,
+                           input_ids=np.zeros((args.batch_size * 10, args.timesteps), dtype=np.int32),
+                           token_type_ids=np.zeros((args.batch_size * 10, args.timesteps), dtype=np.int32),
+                           attention_mask=np.ones((args.batch_size * 10, args.timesteps), dtype=np.int32),
+                           batch_size=args.batch_size)
         t1 = time.time()
         print("%.3f" % (t1 - t0))
 

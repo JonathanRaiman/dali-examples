@@ -17,6 +17,7 @@
 #include "utils.h"
 
 DEFINE_bool(use_jit_fusion, true, "Whether to use JIT Fusion.");
+DEFINE_bool(inference_only, true, "Whether to only run inference.");
 DEFINE_int32(batch_size, 100, "Batch size");
 DEFINE_int32(epochs, 1, "Epochs");
 DEFINE_int32(timesteps, 10, "Timesteps");
@@ -373,10 +374,12 @@ struct BertModel : public AbstractLayer {
     BertEncoder encoder_;
     BertPooler pooler_;
     DType dtype_;
+    Layer prediction_head_;
     BertModel(const BertConfig& config, DType dtype) :
         embeddings_(config, dtype),
         encoder_(config, dtype),
         pooler_(config, dtype),
+        prediction_head_(config.hidden_size, config.vocab_size, dtype),
         dtype_(dtype) {}
     std::tuple<std::vector<Tensor>, Tensor> activate(const Tensor& input_ids, const Tensor& token_type_ids,
                                                      const Tensor& attention_mask, bool output_all_encoded_layers) const {
@@ -404,6 +407,12 @@ struct BertModel : public AbstractLayer {
         auto pooled_output = pooler_.activate(sequence_output);
         return std::make_tuple(encoded_layers, pooled_output);
     }
+
+    Tensor predict(const Tensor& input_ids, const Tensor& token_type_ids, const Tensor& attention_mask) const {
+        auto sequence_output = std::get<0>(activate(input_ids, token_type_ids, attention_mask, false)).back();
+        return prediction_head_.activate(sequence_output);
+    }
+
     virtual std::vector<Tensor> parameters() const {
         return utils::concatenate({embeddings_.parameters(), encoder_.parameters(), pooler_.parameters()});
     }
@@ -420,18 +429,18 @@ std::tuple<Array, Array> training_epoch(const BertModel& model,
     auto params = model.parameters();
     Array num_correct(0, DTYPE_DOUBLE);
     Array epoch_error(0, DTYPE_DOUBLE);
+
     for (int batch_start = 0; batch_start < num_examples; batch_start += batch_size) {
         auto batch_slice = Slice(batch_start, std::min(batch_start + batch_size, num_examples));
         Tensor batch_input_ids = input_ids[batch_slice];
         Tensor batch_token_type_ids = token_type_ids[batch_slice];
         Tensor batch_attention_mask = attention_mask[batch_slice];
-        auto probs = model.activate(batch_input_ids, batch_token_type_ids, batch_attention_mask, false);
-        // Tensor error = tensor_ops::softmax_cross_entropy(probs, batch_labels);
-        // error.mean().grad();
-        // if (!FLAGS_use_jit_fusion) error.w.eval();
-        // epoch_error += error.w.sum();
-        // graph::backward();
-        // op::control_dependencies(solver->step(params), {num_correct, epoch_error}).eval();
+        auto probs = model.predict(batch_input_ids, batch_token_type_ids, batch_attention_mask);
+        Tensor error = tensor_ops::softmax_cross_entropy(probs, batch_input_ids);
+        error.mean().grad();
+        epoch_error += error.w.sum();
+        graph::backward();
+        op::control_dependencies(solver->step(params), {num_correct, epoch_error}).eval();
     }
     return std::make_tuple(epoch_error / (double)num_examples, num_correct / (double)num_examples);
 }
@@ -466,21 +475,34 @@ int main (int argc, char *argv[]) {
     config.hidden_act = "gelu";
 
     BertModel model(config, DTYPE_FLOAT);
+    auto params = model.parameters();
+    auto solver = solver::construct("sgd", params, 0.01);
+    solver->clip_norm_ = 0.0;
+    solver->clip_abs_  = 0.0;
     long prev_number_of_computations = number_of_computations();
     long prev_number_of_allocations = memory::number_of_allocations();
     long prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
     long prev_actual_number_of_allocations = memory::bank::number_of_allocations();
     long prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
 
+
+    Tensor train_x = Tensor::zeros({batch_size * 10, FLAGS_timesteps}, DTYPE_INT32);
+    Tensor attention_mask = Tensor::ones({batch_size * 10, FLAGS_timesteps}, DTYPE_FLOAT);
+
     for (int i = 0; i < FLAGS_epochs; i++) {
         graph::NoBackprop nb;
         auto epoch_start_time = std::chrono::system_clock::now();
-        auto res = model.activate(Tensor::zeros({batch_size, FLAGS_timesteps}, DTYPE_INT32),
-                                  Tensor::zeros({batch_size, FLAGS_timesteps}, DTYPE_INT32),
-                                  Tensor::ones({batch_size, FLAGS_timesteps}, DTYPE_INT32),
-                                  false);
-        std::get<1>(res).w.eval();
-        std::get<1>(res).w.to_device(Device::cpu());
+
+        if (FLAGS_inference_only) {
+            auto res = model.activate(Tensor::zeros({batch_size, FLAGS_timesteps}, DTYPE_INT32),
+                                      Tensor::zeros({batch_size, FLAGS_timesteps}, DTYPE_INT32),
+                                      Tensor::ones({batch_size, FLAGS_timesteps}, DTYPE_INT32),
+                                      false);
+            std::get<1>(res).w.eval();
+            std::get<1>(res).w.to_device(Device::cpu());
+        } else {
+            training_epoch(model, solver, train_x, train_x, attention_mask, batch_size);
+        }
         std::chrono::duration<double> epoch_duration = (std::chrono::system_clock::now() - epoch_start_time);
         std::cout << epoch_duration.count()
               << " " << number_of_computations() - prev_number_of_computations
