@@ -414,7 +414,7 @@ struct BertModel : public AbstractLayer {
     }
 
     virtual std::vector<Tensor> parameters() const {
-        return utils::concatenate({embeddings_.parameters(), encoder_.parameters(), pooler_.parameters()});
+        return utils::concatenate({embeddings_.parameters(), encoder_.parameters(), pooler_.parameters(), prediction_head_.parameters()});
     }
 };
 
@@ -488,12 +488,13 @@ int main (int argc, char *argv[]) {
 
     Tensor train_x = Tensor::zeros({batch_size * 10, FLAGS_timesteps}, DTYPE_INT32);
     Tensor attention_mask = Tensor::ones({batch_size * 10, FLAGS_timesteps}, DTYPE_FLOAT);
-
+    attention_mask.constant = true;
+    
     for (int i = 0; i < FLAGS_epochs; i++) {
-        graph::NoBackprop nb;
         auto epoch_start_time = std::chrono::system_clock::now();
 
         if (FLAGS_inference_only) {
+            graph::NoBackprop nb;
             auto res = model.activate(Tensor::zeros({batch_size, FLAGS_timesteps}, DTYPE_INT32),
                                       Tensor::zeros({batch_size, FLAGS_timesteps}, DTYPE_INT32),
                                       Tensor::ones({batch_size, FLAGS_timesteps}, DTYPE_INT32),
