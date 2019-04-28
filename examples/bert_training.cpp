@@ -438,9 +438,10 @@ std::tuple<Array, Array> training_epoch(const BertModel& model,
         auto probs = model.predict(batch_input_ids, batch_token_type_ids, batch_attention_mask);
         Tensor error = tensor_ops::softmax_cross_entropy(probs, batch_input_ids);
         error.mean().grad();
-        epoch_error += error.w.sum();
+        auto batch_error = error.w.sum();
+        epoch_error += batch_error;
         graph::backward();
-        op::control_dependencies(solver->step(params), {num_correct, epoch_error}).eval();
+        op::control_dependencies(solver->step(params), {epoch_error}).eval();
     }
     return std::make_tuple(epoch_error / (double)num_examples, num_correct / (double)num_examples);
 }
@@ -489,6 +490,14 @@ int main (int argc, char *argv[]) {
     Tensor train_x = Tensor::zeros({batch_size * 10, FLAGS_timesteps}, DTYPE_INT32);
     Tensor attention_mask = Tensor::ones({batch_size * 10, FLAGS_timesteps}, DTYPE_FLOAT);
     attention_mask.constant = true;
+
+    {
+        std::vector<Array> inits;
+        for (auto& p : params) {
+            inits.emplace_back(p.w);
+        }
+        op::control_dependencies(Array(0), inits).eval();
+    }
     
     for (int i = 0; i < FLAGS_epochs; i++) {
         auto epoch_start_time = std::chrono::system_clock::now();
