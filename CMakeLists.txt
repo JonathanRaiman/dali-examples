@@ -53,6 +53,7 @@ set(EXAMPLE_PROGRAMS # api_showcase
                      mnist_training
                      small_fc
                      bert_training
+                     sentiment_neuron_training
                      # visualizer
                      )
 message("DALI_AND_DEPS_LIBRARIES => " ${DALI_AND_DEPS_LIBRARIES})
