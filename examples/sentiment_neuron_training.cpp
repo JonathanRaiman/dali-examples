@@ -19,6 +19,7 @@
 DEFINE_bool(use_jit_fusion, true, "Whether to use JIT Fusion.");
 DEFINE_int32(batch_size, 128, "Batch size");
 DEFINE_int32(hidden_size, 256, "Hidden size");
+DEFINE_int32(timesteps, 16, "Timesteps");
 DEFINE_int32(epochs, 10, "Epochs");
 DEFINE_int32(max_fusion_arguments, 3, "Max fusion arguments");
 
@@ -122,7 +123,8 @@ struct SentimentNeuronModel : public AbstractLayer {
 
 std::tuple<Array, Array> training_epoch(const SentimentNeuronModel& model,
                                         std::shared_ptr<solver::AbstractSolver> solver,
-                                        int batch_size) {
+                                        int batch_size,
+                                        int timesteps) {
     int num_examples = 1000;
     auto params = model.parameters();
     Array num_correct(0, DTYPE_DOUBLE);
@@ -130,15 +132,18 @@ std::tuple<Array, Array> training_epoch(const SentimentNeuronModel& model,
 
     for (int batch_start = 0; batch_start < num_examples; batch_start += batch_size) {
         auto batch_slice = Slice(batch_start, std::min(batch_start + batch_size, num_examples));
-        Tensor x = Tensor({batch_size, 16}, DTYPE_INT32);
-        Tensor y = Tensor({batch_size, 16}, DTYPE_INT32);
-        Tensor mask = Tensor({batch_size, 16}, DTYPE_FLOAT);
+        Tensor x = Tensor({batch_size, timesteps}, DTYPE_INT32);
+        Tensor y = Tensor({batch_size, timesteps}, DTYPE_INT32);
+        Tensor mask = Tensor({batch_size, timesteps}, DTYPE_FLOAT);
         auto probs = model.activate(x) * mask[Slice()][Slice()][NewAxis()];
         Tensor error = tensor_ops::softmax_cross_entropy(probs, y);
         (error.sum() / mask.sum()).grad();
         auto batch_error = error.w.sum();
         epoch_error += batch_error;
-        graph::backward();
+        {
+            utils::Timer backward("backward");
+            graph::backward();
+        }
         op::control_dependencies(solver->step(params), {epoch_error}).eval();
     }
     return std::make_tuple(epoch_error / (double)num_examples, num_correct / (double)num_examples);
@@ -184,24 +189,27 @@ int main (int argc, char *argv[]) {
         }
         op::control_dependencies(Array(0), inits).eval();
     }
-    
-    for (int i = 0; i < FLAGS_epochs; i++) {
-        auto epoch_start_time = std::chrono::system_clock::now();
-        training_epoch(model, solver, batch_size);
-        std::chrono::duration<double> epoch_duration = (std::chrono::system_clock::now() - epoch_start_time);
-        std::cout << epoch_duration.count()
-              << " " << number_of_computations() - prev_number_of_computations
-              << " " << memory::number_of_allocations() - prev_number_of_allocations
-              << " " << memory::number_of_bytes_allocated() - prev_number_of_bytes_allocated
-              << " " << memory::bank::number_of_allocations() - prev_actual_number_of_allocations
-              << " " << memory::bank::number_of_bytes_allocated() - prev_actual_number_of_bytes_allocated
-              << std::endl;
-        prev_number_of_computations = number_of_computations();
-        prev_number_of_allocations = memory::number_of_allocations();
-        prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
-        prev_actual_number_of_allocations = memory::bank::number_of_allocations();
-        prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
+    for (int i = 1; i < 11; ++i) {
+        int tstep = i * 16;
+        std::cout << "Timesteps " << tstep << std::endl;
+        for (int i = 0; i < FLAGS_epochs; i++) {
+            auto epoch_start_time = std::chrono::system_clock::now();
+            training_epoch(model, solver, batch_size, tstep);
+            std::chrono::duration<double> epoch_duration = (std::chrono::system_clock::now() - epoch_start_time);
+            std::cout << epoch_duration.count()
+                  << " " << number_of_computations() - prev_number_of_computations
+                  << " " << memory::number_of_allocations() - prev_number_of_allocations
+                  << " " << memory::number_of_bytes_allocated() - prev_number_of_bytes_allocated
+                  << " " << memory::bank::number_of_allocations() - prev_actual_number_of_allocations
+                  << " " << memory::bank::number_of_bytes_allocated() - prev_actual_number_of_bytes_allocated
+                  << std::endl;
+            prev_number_of_computations = number_of_computations();
+            prev_number_of_allocations = memory::number_of_allocations();
+            prev_number_of_bytes_allocated = memory::number_of_bytes_allocated();
+            prev_actual_number_of_allocations = memory::bank::number_of_allocations();
+            prev_actual_number_of_bytes_allocated = memory::bank::number_of_bytes_allocated();
+        }
+        optimization_report();
+        utils::Timer::report();
     }
-    optimization_report();
-    utils::Timer::report();
 }
