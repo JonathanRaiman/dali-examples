@@ -131,20 +131,25 @@ std::tuple<Array, Array> training_epoch(const SentimentNeuronModel& model,
     Array epoch_error(0, DTYPE_DOUBLE);
 
     for (int batch_start = 0; batch_start < num_examples; batch_start += batch_size) {
-        auto batch_slice = Slice(batch_start, std::min(batch_start + batch_size, num_examples));
-        Tensor x = Tensor({batch_size, timesteps}, DTYPE_INT32);
-        Tensor y = Tensor({batch_size, timesteps}, DTYPE_INT32);
-        Tensor mask = Tensor({batch_size, timesteps}, DTYPE_FLOAT);
-        auto probs = model.activate(x) * mask[Slice()][Slice()][NewAxis()];
-        Tensor error = tensor_ops::softmax_cross_entropy(probs, y);
-        (error.sum() / mask.sum()).grad();
-        auto batch_error = error.w.sum();
-        epoch_error += batch_error;
         {
-            utils::Timer backward("backward");
-            graph::backward();
+            utils::Timer backward("graph");
+            auto batch_slice = Slice(batch_start, std::min(batch_start + batch_size, num_examples));
+            Tensor x = Tensor({batch_size, timesteps}, DTYPE_INT32);
+            Tensor y = Tensor({batch_size, timesteps}, DTYPE_INT32);
+            Tensor mask = Tensor({batch_size, timesteps}, DTYPE_FLOAT);
+            auto probs = model.activate(x) * mask[Slice()][Slice()][NewAxis()];
+            Tensor error = tensor_ops::softmax_cross_entropy(probs, y);
+            (error.sum() / mask.sum()).grad();
+            auto batch_error = error.w.sum();
+            epoch_error += batch_error;
+            {
+                utils::Timer backward("backward");
+                graph::backward();
+            }
+            auto op = op::control_dependencies(solver->step(params), {epoch_error});
+            backward.stop();
+            op.eval();
         }
-        op::control_dependencies(solver->step(params), {epoch_error}).eval();
     }
     return std::make_tuple(epoch_error / (double)num_examples, num_correct / (double)num_examples);
 }
@@ -189,7 +194,7 @@ int main (int argc, char *argv[]) {
         }
         op::control_dependencies(Array(0), inits).eval();
     }
-    for (int i = 1; i < 11; ++i) {
+    for (int i = 1; i < 22; ++i) {
         int tstep = i * 16;
         std::cout << "Timesteps " << tstep << std::endl;
         for (int i = 0; i < FLAGS_epochs; i++) {
