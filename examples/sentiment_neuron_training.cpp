@@ -125,7 +125,7 @@ std::tuple<Array, Array> training_epoch(const SentimentNeuronModel& model,
                                         std::shared_ptr<solver::AbstractSolver> solver,
                                         int batch_size,
                                         int timesteps) {
-    int num_examples = 1000;
+    int num_examples = 4 * batch_size;
     auto params = model.parameters();
     Array num_correct(0, DTYPE_DOUBLE);
     Array epoch_error(0, DTYPE_DOUBLE);
@@ -194,8 +194,9 @@ int main (int argc, char *argv[]) {
         }
         op::control_dependencies(Array(0), inits).eval();
     }
-    for (int i = 1; i < 22; ++i) {
-        int tstep = i * 16;
+    // for (int i = 1; i < 22; ++i) {
+    //     int tstep = i * 16;
+        int tstep = FLAGS_timesteps;
         std::cout << "Timesteps " << tstep << std::endl;
         for (int i = 0; i < FLAGS_epochs; i++) {
             auto epoch_start_time = std::chrono::system_clock::now();
@@ -216,5 +217,5 @@ int main (int argc, char *argv[]) {
         }
         optimization_report();
         utils::Timer::report();
-    }
+    // }
 }

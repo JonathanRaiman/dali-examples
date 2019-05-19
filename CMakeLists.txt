@@ -24,7 +24,7 @@ add_definitions(-DGFLAGS_NAMESPACE=${GFLAGS_NAMESPACE})
 # ensure we are using C++11
 # TODO(jonathan): is this flag required for apple?
 # -stdlib=libc++
-SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} --std=c++11 -O3 -g -fPIC" )
+SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} --std=c++14 -O3 -g -fPIC" )
 
 include_directories(${PROJECT_SOURCE_DIR})
 
