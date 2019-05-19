@@ -3,6 +3,7 @@ import argparse
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
 import numpy as np
+import os
 from os.path import realpath, join, dirname
 import time
 from argparse_utils import add_bool_flag
@@ -36,6 +37,7 @@ class BertConfig(object):
                  type_vocab_size=2,
                  num_attention_heads=12,
                  num_hidden_layers=12,
+                 layer_norm_eps=1e-12,
                  hidden_dropout_prob=0.1,
                  attention_probs_dropout_prob=0.1,
                  initializer_range=0.02,
@@ -291,22 +293,34 @@ def build_model(hidden_layers):
     return BertModel(input_ids, token_type_ids, attention_mask, output, labels, train_op, loss)
 
 
-def training_epoch(session, model, input_ids, token_type_ids, attention_mask, batch_size):
-    num_examples = len(input_ids)
+def batch_iterator(data_path, batch_size, max_length):
+    for fname in os.listdir(data_path):
+        if fname.endswith(".npy"):
+            batch = np.load(os.path.join(data_path, fname))
+            for i in range(0, batch.shape[0], batch_size):
+                subbatch = batch[i:i + batch_size]
+                for j in range(0, batch.shape[1], max_length):
+                    yield subbatch[:, j:j + max_length]
+
+
+def training_epoch(session, model, data_dir, batch_size, max_length, max_examples):
+    num_examples = 0
     num_correct = 0.0
     epoch_error = 0.0
-    for batch_start in range(0, num_examples, batch_size):
-        batch_slice = slice(batch_start, min(batch_start + batch_size, num_examples))
-        batch_input_ids = input_ids[batch_slice]
-        batch_token_type_ids = token_type_ids[batch_slice]
-        batch_attention_mask = attention_mask[batch_slice]
+    for batch in batch_iterator(data_dir, batch_size, max_length):
+        batch_input_ids = np.concatenate([np.ones((len(batch), 1)), batch[:, :-1]], axis=-1)
+        batch_label_ids = np.maximum(batch, 0)
+        batch_attention_mask = batch_input_ids == -1
         _, batch_loss = session.run(
             (model.train_op, model.loss),
             {model.input_ids: batch_input_ids,
-             model.labels: batch_input_ids,
-             model.token_type_ids: batch_token_type_ids,
+             model.labels: batch_label_ids,
+             model.token_type_ids: batch_label_ids,
              model.attention_mask: batch_attention_mask})
         epoch_error += batch_loss
+        num_examples += len(batch)
+        if num_examples > max_examples:
+            break
     return epoch_error / num_examples, num_correct / num_examples
 
 
@@ -316,6 +330,8 @@ def main():
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--hidden_layers", default=8, type=int)
     parser.add_argument("--timesteps", default=10, type=int)
+    parser.add_argument("--data_dir", default=join(DATA_DIR, "lm1b"), type=str)
+    parser.add_argument("--max_examples", default=2048, type=int)
     add_bool_flag(parser, "inference_only", True)
     args = parser.parse_args()
     model = build_model(args.hidden_layers)
@@ -334,10 +350,10 @@ def main():
         else:
             training_epoch(session=sess,
                            model=model,
-                           input_ids=np.zeros((args.batch_size * 10, args.timesteps), dtype=np.int32),
-                           token_type_ids=np.zeros((args.batch_size * 10, args.timesteps), dtype=np.int32),
-                           attention_mask=np.ones((args.batch_size * 10, args.timesteps), dtype=np.int32),
-                           batch_size=args.batch_size)
+                           data_dir=args.data_dir,
+                           batch_size=args.batch_size,
+                           max_length=args.timesteps,
+                           max_examples=args.max_examples)
         t1 = time.time()
         print("%.3f" % (t1 - t0))
 

@@ -21,8 +21,10 @@ DEFINE_bool(inference_only, true, "Whether to only run inference.");
 DEFINE_int32(batch_size, 100, "Batch size");
 DEFINE_int32(epochs, 1, "Epochs");
 DEFINE_int32(timesteps, 10, "Timesteps");
+DEFINE_int32(max_examples, 2048, "Max examples per epoch");
 DEFINE_int32(hidden_layers, 8, "Hidden layers");
 DEFINE_int32(max_fusion_arguments, 3, "Max fusion arguments");
+DEFINE_string(path, utils::dir_join({STR(DALI_EXAMPLES_DATA_DIR), "lm1b"}), "Location of 1 Billion data.");
 
 // BERT implementation adapted from https://github.com/huggingface/pytorch-pretrained-BERT's PyTorch implementation
 
@@ -421,27 +423,41 @@ struct BertModel : public AbstractLayer {
 
 std::tuple<Array, Array> training_epoch(const BertModel& model,
                                         std::shared_ptr<solver::AbstractSolver> solver,
-                                        Tensor input_ids,
-                                        Tensor token_type_ids,
-                                        Tensor attention_mask,
-                                        int batch_size) {
-    int num_examples = input_ids.shape()[0].value();
+                                        std::string data_dir,
+                                        int batch_size,
+                                        int max_length,
+                                        int max_examples) {
+    int num_examples = 0;
     auto params = model.parameters();
     Array num_correct(0, DTYPE_DOUBLE);
     Array epoch_error(0, DTYPE_DOUBLE);
-
-    for (int batch_start = 0; batch_start < num_examples; batch_start += batch_size) {
-        auto batch_slice = Slice(batch_start, std::min(batch_start + batch_size, num_examples));
-        Tensor batch_input_ids = input_ids[batch_slice];
-        Tensor batch_token_type_ids = token_type_ids[batch_slice];
-        Tensor batch_attention_mask = attention_mask[batch_slice];
-        auto probs = model.predict(batch_input_ids, batch_token_type_ids, batch_attention_mask);
-        Tensor error = tensor_ops::softmax_cross_entropy(probs, batch_input_ids);
-        error.mean().grad();
-        auto batch_error = error.w.sum();
-        epoch_error += batch_error;
-        graph::backward();
-        op::control_dependencies(solver->step(params), {epoch_error}).eval();
+    for (auto& fname : utils::listdir(data_dir)) {
+        if (utils::endswith(fname, ".npy")) {
+            auto batch = Array::load(utils::dir_join({data_dir, fname}));
+            for (int i = 0; i < batch.shape()[0]; i += batch_size) {
+                for (int j = 0; j < batch.shape()[1]; j += max_length) {
+                    auto batch_slice = Slice(i, std::min(i + batch_size, int(batch.shape()[0])));
+                    auto time_slice = Slice(j, std::min(j + max_length, int(batch.shape()[1])));
+                    Array subbatch = batch[batch_slice][time_slice];
+                    auto batch_label_ids = op::maximum(subbatch, 0);
+                    auto batch_input_ids = op::concatenate({Array::ones({subbatch.shape()[0], 1}, DTYPE_INT32),
+                                                            batch_label_ids[Slice()][Slice(0, -1)]}, -1);
+                    
+                    auto batch_attention_mask = op::equals(batch_input_ids, -1);
+                    auto probs = model.predict(batch_input_ids, batch_input_ids, batch_attention_mask);
+                    Tensor error = tensor_ops::softmax_cross_entropy(probs, batch_label_ids);
+                    error.mean().grad();
+                    auto batch_error = error.w.sum();
+                    epoch_error += batch_error;
+                    graph::backward();
+                    op::control_dependencies(solver->step(params), {epoch_error}).eval();
+                    num_examples += subbatch.shape()[0];
+                    if (num_examples > max_examples) {
+                        return std::make_tuple(epoch_error / (double)num_examples, num_correct / (double)num_examples);
+                    }
+                }
+            }
+        }
     }
     return std::make_tuple(epoch_error / (double)num_examples, num_correct / (double)num_examples);
 }
@@ -511,7 +527,7 @@ int main (int argc, char *argv[]) {
             std::get<1>(res).w.eval();
             std::get<1>(res).w.to_device(Device::cpu());
         } else {
-            training_epoch(model, solver, train_x, train_x, attention_mask, batch_size);
+            training_epoch(model, solver, FLAGS_path, FLAGS_batch_size, FLAGS_timesteps, FLAGS_max_examples);
         }
         std::chrono::duration<double> epoch_duration = (std::chrono::system_clock::now() - epoch_start_time);
         std::cout << epoch_duration.count()

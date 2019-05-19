@@ -6,6 +6,7 @@ from os import stat
 
 SCRIPT_DIR = dirname(realpath(__file__))
 
+
 def main():
     files = [
         join(SCRIPT_DIR, "train_x.npy"),
@@ -28,7 +29,7 @@ def main():
 
         data = data[indices]
         target = target[indices]
-
+        
         train_x, train_y = (data[:-10000].astype(np.float32) / 255.0).astype(np.float32), target[:-10000].astype(np.int32)
         test_x, test_y = (data[-10000:].astype(np.float32) / 255.0).astype(np.float32), target[-10000:].astype(np.int32)
 
@@ -40,6 +41,7 @@ def main():
         np.save(join(SCRIPT_DIR, "test_x.npy"), test_x)
         np.save(join(SCRIPT_DIR, "test_y.npy"), test_y)
         print("Done.")
+
 
 if __name__ == "__main__":
     main()

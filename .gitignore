@@ -38,6 +38,7 @@ saves/*
 imported_saves/*
 pvdm_snapshots/*
 sentiment_data/*
+data/lm1b/*.npy
 *.npy
 *.mat
 *.vocab
