@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <fstream>
 
 #include <dali/core.h>
 #include <dali/utils.h>
@@ -9,10 +10,13 @@
 #include <dali/array/expression/computation.h>
 #include <dali/array/memory/synchronized_memory.h>
 #include <dali/array/memory/memory_bank.h>
+#include <dali/array/from_vector.h>
 #include <dali/utils/performance_report.h>
 #include <dali/utils/concatenate.h>
 #include <dali/utils/make_message.h>
 #include <dali/utils/timer.h>
+
+#include "third_party/json.hpp"
 
 #include "utils.h"
 
@@ -22,6 +26,8 @@ DEFINE_int32(hidden_size, 256, "Hidden size");
 DEFINE_int32(timesteps, 16, "Timesteps");
 DEFINE_int32(epochs, 10, "Epochs");
 DEFINE_int32(max_fusion_arguments, 3, "Max fusion arguments");
+DEFINE_int32(max_examples, 2048, "Max examples");
+DEFINE_string(path, utils::dir_join({STR(DALI_EXAMPLES_DATA_DIR), "amazon_reviews", "reviews_Movies_and_TV_5.json"}), "Path to training data");
 
 Tensor uniform_tensor(const shape_t& sizes, DType dtype) {
     int input_size = sizes[0].value();
@@ -123,9 +129,10 @@ struct SentimentNeuronModel : public AbstractLayer {
 
 std::tuple<Array, Array> training_epoch(const SentimentNeuronModel& model,
                                         std::shared_ptr<solver::AbstractSolver> solver,
-                                        int batch_size,
-                                        int timesteps) {
-    int num_examples = 4 * batch_size;
+                                        Array data,
+                                        int batch_size) {
+    int num_examples = data.shape()[0].value();
+    int timesteps_plus_1 = data.shape()[1].value();
     auto params = model.parameters();
     Array num_correct(0, DTYPE_DOUBLE);
     Array epoch_error(0, DTYPE_DOUBLE);
@@ -134,12 +141,13 @@ std::tuple<Array, Array> training_epoch(const SentimentNeuronModel& model,
         {
             utils::Timer backward("graph");
             auto batch_slice = Slice(batch_start, std::min(batch_start + batch_size, num_examples));
-            Tensor x = Tensor({batch_size, timesteps}, DTYPE_INT32);
-            Tensor y = Tensor({batch_size, timesteps}, DTYPE_INT32);
-            Tensor mask = Tensor({batch_size, timesteps}, DTYPE_FLOAT);
-            auto probs = model.activate(x) * mask[Slice()][Slice()][NewAxis()];
+            auto time_slice = Slice(0, timesteps_plus_1 - 1);
+            auto time_slice_pred = Slice(1, timesteps_plus_1);
+            Tensor x = Array(data[batch_slice][time_slice]);
+            Tensor y = Array(data[batch_slice][time_slice_pred]);
+            auto probs = model.activate(x);
             Tensor error = tensor_ops::softmax_cross_entropy(probs, y);
-            (error.sum() / mask.sum()).grad();
+            (error.mean()).grad();
             auto batch_error = error.w.sum();
             epoch_error += batch_error;
             {
@@ -152,6 +160,43 @@ std::tuple<Array, Array> training_epoch(const SentimentNeuronModel& model,
         }
     }
     return std::make_tuple(epoch_error / (double)num_examples, num_correct / (double)num_examples);
+}
+
+
+Array load_training_data(const std::string& path, int timesteps, int max_examples) {
+    int timesteps_plus_1 = timesteps + 1;
+    WithDevicePreference pref(Device::cpu());
+    std::ifstream file(path);
+    if (file.is_open()) {
+        std::string line;
+        Array out = Array::zeros({max_examples, timesteps_plus_1}, DTYPE_INT32);
+        int examples = 0;
+        std::vector<int> sentence;
+        while (std::getline(file, line)) {
+            auto parsed = nlohmann::json::parse(line);
+            for (auto c : parsed.at("reviewText").get<std::string>()) {
+                sentence.emplace_back(std::min(int(c), 255));
+                if (sentence.size() == timesteps_plus_1) {
+                    out[examples] = Array::from_vector(sentence);
+                    sentence.clear();
+                    out.eval();
+                    ++examples;
+                    if (examples == max_examples) {
+                        break;
+                    }
+                }
+            }
+            if (examples == max_examples) {
+                break;
+            }
+        }
+        file.close();
+        return out;
+    } else {
+        // could not load file.
+        std::cout << "Failed to open \"" << path << "\" generating dummy data instead." << std::endl;
+        return op::uniform(0, 255, {max_examples, timesteps_plus_1});
+    }
 }
 
 int main (int argc, char *argv[]) {
@@ -194,13 +239,16 @@ int main (int argc, char *argv[]) {
         }
         op::control_dependencies(Array(0), inits).eval();
     }
+
+    Array x = load_training_data(FLAGS_path, FLAGS_timesteps, FLAGS_max_examples);
+
     // for (int i = 1; i < 22; ++i) {
     //     int tstep = i * 16;
         int tstep = FLAGS_timesteps;
         std::cout << "Timesteps " << tstep << std::endl;
         for (int i = 0; i < FLAGS_epochs; i++) {
             auto epoch_start_time = std::chrono::system_clock::now();
-            training_epoch(model, solver, batch_size, tstep);
+            training_epoch(model, solver, x, batch_size);
             std::chrono::duration<double> epoch_duration = (std::chrono::system_clock::now() - epoch_start_time);
             std::cout << epoch_duration.count()
                   << " " << number_of_computations() - prev_number_of_computations

@@ -39,6 +39,7 @@ imported_saves/*
 pvdm_snapshots/*
 sentiment_data/*
 data/lm1b/*.npy
+data/amazon_reviews/*.json
 *.npy
 *.mat
 *.vocab

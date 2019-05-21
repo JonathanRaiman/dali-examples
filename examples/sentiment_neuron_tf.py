@@ -1,10 +1,9 @@
 import argparse
 import tensorflow as tf
 import numpy as np
-import pytreebank
+import json
 import time
-import tqdm
-from os.path import realpath, join, dirname
+from os.path import realpath, join, dirname, exists
 
 SCRIPT_DIR = dirname(realpath(__file__))
 DATA_DIR = join(dirname(SCRIPT_DIR), "data")
@@ -107,22 +106,29 @@ def model(hps, X, M=None, reuse=False):
     return cells, states, logits
 
 
-def preprocess(text, front_pad='\n ', end_pad=' '):
-    text = text.replace('\n', ' ').strip()
-    text = front_pad + text + end_pad
-    text = text.encode()
-    return text
-
-
-def batchify(sentences):
-    max_len = max(map(len, sentences))
-    data = np.zeros((len(sentences), max_len + 1), dtype=np.int32)
-    mask = np.zeros((len(sentences), max_len), dtype=np.float32)
-    for idx, sent in enumerate(sentences):
-        data[idx, 1:len(sent) + 1] = sent
-        mask[idx, :len(sent)] = 1.0
-    x, y, mask = data[:, :-1], data[:, 1:], mask
-    return x, y, mask
+def load_training_data(path, timesteps, max_examples):
+    timesteps_plus_1 = timesteps + 1
+    if exists(path):
+        out = np.zeros((max_examples, timesteps_plus_1), dtype=np.int32)
+        sentence = []
+        examples = 0
+        with open(path, "rt") as fin:
+            for line in fin:
+                parsed = json.loads(line)
+                for c in parsed["reviewText"]:
+                    sentence.append(min(ord(c), 255))
+                    if len(sentence) == timesteps_plus_1:
+                        out[examples] = sentence
+                        sentence.clear()
+                        examples += 1
+                        if examples == max_examples:
+                            break
+                if examples == max_examples:
+                    break
+        return out
+    else:
+        print("Failed to open \"{}\" generating dummy data instead.".format(path))
+        return np.random.randint(0, 255, size=(max_examples, timesteps))
 
 
 def main():
@@ -130,6 +136,9 @@ def main():
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--hidden_size", type=int, default=256)
+    parser.add_argument("--timesteps", type=int, default=256)
+    parser.add_argument("--max_examples", type=int, default=2048)
+    parser.add_argument("--path", type=str, default=join(DATA_DIR, "amazon_reviews", "reviews_Movies_and_TV_5.json"))
     args = parser.parse_args()
     hps = HParams(
         nhidden=args.hidden_size,
@@ -142,17 +151,12 @@ def main():
         rnn_type='mlstm',
         embd_wn=True,
     )
-    # params = [np.load('model/%d.npy' % i) for i in range(15)]
-    # params[2] = np.concatenate(params[2:6], axis=1)
-    # params[3:6] = []
 
     X = tf.placeholder(tf.int32, [None, None])
     Y = tf.placeholder(tf.int32, [None, None])
-    mask = tf.placeholder(tf.float32, [None, None])
     cells, states, logits = model(hps, X, reuse=False)
     loss = tf.losses.sparse_softmax_cross_entropy(logits=logits, labels=Y)
-    loss = loss * mask
-    mean_loss = tf.reduce_sum(loss) / tf.reduce_sum(mask)
+    mean_loss = tf.reduce_mean(loss)
     train_op = tf.train.GradientDescentOptimizer(0.01).minimize(mean_loss)
     loss = tf.reduce_sum(loss)
     config = tf.ConfigProto()
@@ -161,18 +165,15 @@ def main():
     tf.global_variables_initializer().run(session=sess)
 
     # load some data
-    loaded_dataset = pytreebank.load_sst(join(DATA_DIR, "sst"))
-    # labels = np.array([label for label, _ in text_data])
-    text = np.array([list(preprocess(ex.to_lines()[0])) for ex in loaded_dataset['train']])
-    batches_per_epoch = int(np.ceil(len(text) / args.batch_size))
+    x = load_training_data(path=args.path, timesteps=args.timesteps, max_examples=args.max_examples)
 
     for epoch in range(args.epochs):
         t0 = time.time()
         epoch_loss = 0.0
-        for i in tqdm.tqdm(range(batches_per_epoch)):
-            batch_indices = np.random.choice(len(text), size=args.batch_size)
-            x, y, batch_mask = batchify(text[batch_indices])
-            _, batch_cost = sess.run((train_op, loss), {X: x, Y: y, mask: batch_mask})
+        for i in range(0, len(x), args.batch_size):
+            batch_x = x[i:i + args.batch_size, 0:-1]
+            batch_y = x[i:i + args.batch_size, 1:]
+            _, batch_cost = sess.run((train_op, loss), {X: batch_x, Y: batch_y})
             epoch_loss += batch_cost
         t1 = time.time()
         print("%.3f\t%.3f" % (t1 - t0, epoch_loss))

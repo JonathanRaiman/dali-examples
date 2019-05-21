@@ -1,8 +1,14 @@
 import argparse
 import os
 import numpy as np
-from tensor2tensor.data_generators import lm1b
-from tensor2tensor.data_generators.generator_utils import tfrecord_iterator_for_problem
+try:
+    from tensor2tensor.data_generators import lm1b
+    from tensor2tensor.data_generators.generator_utils import tfrecord_iterator_for_problem
+except ImportError:
+    print("To generate this data you must install tensor2tensor:\n"
+          "pip install git+https://github.com/tensorflow/tensor2tensor")
+    raise
+
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
