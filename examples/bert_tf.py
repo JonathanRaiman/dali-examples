@@ -7,6 +7,8 @@ import os
 from os.path import realpath, join, dirname
 import time
 from argparse_utils import add_bool_flag
+from tensorflow.contrib.compiler import xla
+
 
 BertModel = namedtuple("BertModel", "input_ids token_type_ids attention_mask output labels train_op loss")
 SCRIPT_DIR = dirname(realpath(__file__))
@@ -195,7 +197,7 @@ def bert_model(config, input_ids, token_type_ids, attention_mask, output_all_enc
     return (encoded_layers, pooled_output)
 
 
-def build_model(hidden_layers):
+def build_model(hidden_layers, use_xla):
     config = BertConfig(
         num_hidden_layers=hidden_layers,
         num_attention_heads=4,
@@ -204,17 +206,28 @@ def build_model(hidden_layers):
         vocab_size=32000,
         hidden_act="gelu"
     )
+
+    def build_model_fn(input_ids, token_type_ids, attention_mask, labels):
+        (last_layer,), output = bert_model(config, input_ids, token_type_ids, attention_mask, False)
+        predictions = tf.contrib.layers.fully_connected(last_layer, config.vocab_size, activation_fn=None)
+        loss = tf.losses.sparse_softmax_cross_entropy(logits=predictions, labels=labels)
+        mean_loss = tf.reduce_mean(loss)
+        train_op = tf.train.GradientDescentOptimizer(0.01).minimize(mean_loss)
+        loss = tf.reduce_sum(loss)
+        # with tf.control_dependencies([train_op]):
+        train_op_loss = tf.identity(loss)
+        return train_op_loss, output, loss
+
     input_ids = tf.placeholder(tf.int32, [None, None])
     token_type_ids = tf.placeholder(tf.int32, [None, None])
     attention_mask = tf.placeholder(tf.int32, [None, None])
     labels = tf.placeholder(tf.int32, [None, None])
-    (last_layer,), output = bert_model(config, input_ids, token_type_ids, attention_mask, False)
 
-    predictions = tf.contrib.layers.fully_connected(last_layer, config.vocab_size, activation_fn=None)
-    loss = tf.losses.sparse_softmax_cross_entropy(logits=predictions, labels=labels)
-    mean_loss = tf.reduce_mean(loss)
-    train_op = tf.train.GradientDescentOptimizer(0.01).minimize(mean_loss)
-    loss = tf.reduce_sum(loss)
+    if use_xla:
+        train_op, output, loss = xla.compile(computation=build_model_fn,
+                                             inputs=(input_ids, token_type_ids, attention_mask, labels))
+    else:
+        train_op, output, loss = build_model_fn(input_ids, token_type_ids, attention_mask, labels)
     return BertModel(input_ids, token_type_ids, attention_mask, output, labels, train_op, loss)
 
 
@@ -258,10 +271,14 @@ def main():
     parser.add_argument("--data_dir", default=join(DATA_DIR, "lm1b"), type=str)
     parser.add_argument("--max_examples", default=2048, type=int)
     add_bool_flag(parser, "inference_only", True)
+    add_bool_flag(parser, "xla", False)
     args = parser.parse_args()
-    model = build_model(args.hidden_layers)
+    model = build_model(args.hidden_layers, use_xla=args.xla)
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
+    if args.xla:
+        config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
+
     sess = tf.InteractiveSession()
     sess.run(tf.global_variables_initializer())
 

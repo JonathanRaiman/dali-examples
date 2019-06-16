@@ -4,6 +4,8 @@ import numpy as np
 import json
 import time
 from os.path import realpath, join, dirname, exists
+from argparse_utils import add_bool_flag
+from tensorflow.contrib.compiler import xla
 
 SCRIPT_DIR = dirname(realpath(__file__))
 DATA_DIR = join(dirname(SCRIPT_DIR), "data")
@@ -75,19 +77,34 @@ def mlstm(inputs, hidden_size, scope='lstm', wn=False):
         c = f * prev_c + i * u
         h = o * tf.tanh(c)
 
-        new_all_hs = all_hs.write(iteration, h)
-        new_all_cs = all_cs.write(iteration, c)
+        new_all_hs = all_hs.write(iteration, h) if all_hs is not None else all_hs
+        new_all_cs = all_cs.write(iteration, c) if all_cs is not None else all_cs
         return iteration + 1, new_all_hs, new_all_cs, h, c
 
-    all_hs_arr = tf.TensorArray(tf.float32, dynamic_size=True, size=0)
-    all_cs_arr = tf.TensorArray(tf.float32, dynamic_size=True, size=0)
     init_h = tf.zeros(shape=[batch_size, hidden_size], dtype=tf.float32)
     init_c = tf.zeros(shape=[batch_size, hidden_size], dtype=tf.float32)
     init_iteration = tf.zeros([], tf.int32)
-    _, all_hs_out, all_cs_out, hfinal, cfinal = tf.while_loop(
-        cond, body, loop_vars=[init_iteration, all_hs_arr, all_cs_arr, init_h, init_c])
-    hs = tf.transpose(all_hs_out.stack(), (1, 0, 2))
-    cs = tf.transpose(all_cs_out.stack(), (1, 0, 2))
+    if inputs.get_shape()[1].value is not None:
+        h = init_h
+        c = init_h
+        all_hs = []
+        all_cs = []
+        iteration = init_iteration
+        for t in range(inputs.get_shape()[1].value):
+            iteration, _, _, h, c = body(iteration, None, None, h, c)
+            all_hs.append(h)
+            all_cs.append(c)
+        hfinal = h
+        cfinal = c
+        hs = tf.stack(all_hs, axis=1)
+        cs = tf.stack(all_cs, axis=1)
+    else:
+        all_hs_arr = tf.TensorArray(tf.float32, dynamic_size=True, size=0)
+        all_cs_arr = tf.TensorArray(tf.float32, dynamic_size=True, size=0)
+        _, all_hs_out, all_cs_out, hfinal, cfinal = tf.while_loop(
+            cond, body, loop_vars=tuple([init_iteration, all_hs_arr, all_cs_arr, init_h, init_c]))
+        hs = tf.transpose(all_hs_out.stack(), (1, 0, 2))
+        cs = tf.transpose(all_cs_out.stack(), (1, 0, 2))
     return hs, cs, cfinal, hfinal
 
 
@@ -133,12 +150,13 @@ def load_training_data(path, timesteps, max_examples):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--hidden_size", type=int, default=256)
+    parser.add_argument("--hidden_size", type=int, default=4096)
     parser.add_argument("--timesteps", type=int, default=256)
     parser.add_argument("--max_examples", type=int, default=2048)
     parser.add_argument("--path", type=str, default=join(DATA_DIR, "amazon_reviews", "reviews_Movies_and_TV_5.json"))
+    add_bool_flag(parser, "xla", False)
     args = parser.parse_args()
     hps = HParams(
         nhidden=args.hidden_size,
@@ -152,14 +170,27 @@ def main():
         embd_wn=True,
     )
 
-    X = tf.placeholder(tf.int32, [None, None])
-    Y = tf.placeholder(tf.int32, [None, None])
-    cells, states, logits = model(hps, X, reuse=False)
-    loss = tf.losses.sparse_softmax_cross_entropy(logits=logits, labels=Y)
-    mean_loss = tf.reduce_mean(loss)
-    train_op = tf.train.GradientDescentOptimizer(0.01).minimize(mean_loss)
-    loss = tf.reduce_sum(loss)
+    def build_model(x, y):
+        cells, states, logits = model(hps, x, reuse=False)
+        loss = tf.losses.sparse_softmax_cross_entropy(logits=logits, labels=y)
+        mean_loss = tf.reduce_mean(loss)
+        train_op = tf.train.GradientDescentOptimizer(0.01).minimize(mean_loss)
+        loss = tf.reduce_sum(loss)
+        with tf.control_dependencies([train_op]):
+            train_op_loss = tf.identity(loss)
+        return train_op_loss, loss
+
+    X = tf.placeholder(tf.int32, [None, args.timesteps])
+    Y = tf.placeholder(tf.int32, [None, args.timesteps])
+
+    if args.xla:
+        train_op, loss = xla.compile(computation=build_model, inputs=(X, Y))
+    else:
+        train_op, loss = build_model(X, Y)
+
     config = tf.ConfigProto()
+    if args.xla:
+        config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
     config.gpu_options.allow_growth = True
     sess = tf.InteractiveSession()
     tf.global_variables_initializer().run(session=sess)

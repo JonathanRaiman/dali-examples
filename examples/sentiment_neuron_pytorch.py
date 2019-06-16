@@ -75,9 +75,9 @@ class Model(nn.Module):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--hidden_size", type=int, default=256)
+    parser.add_argument("--hidden_size", type=int, default=4096)
     parser.add_argument("--timesteps", type=int, default=256)
     parser.add_argument("--max_examples", type=int, default=2048)
     parser.add_argument("--path", type=str, default=join(DATA_DIR, "amazon_reviews", "reviews_Movies_and_TV_5.json"))

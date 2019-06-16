@@ -450,7 +450,7 @@ std::tuple<Array, Array> training_epoch(const BertModel& model,
                     auto batch_error = error.w.sum();
                     epoch_error += batch_error;
                     graph::backward();
-                    op::control_dependencies(solver->step(params), {epoch_error}).eval();
+                    op::control_dependency(solver->step(params), epoch_error).eval();
                     num_examples += subbatch.shape()[0];
                     if (num_examples > max_examples) {
                         return std::make_tuple(epoch_error / (double)num_examples, num_correct / (double)num_examples);

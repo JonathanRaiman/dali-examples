@@ -99,7 +99,7 @@ struct MLSTM : public AbstractLayer {
 
 struct SentimentNeuronConfig {
     int vocab_size = 256;
-    int embedding_size = 256;
+    int embedding_size = 64;
     int hidden_size = 256;
 };
 
@@ -154,7 +154,7 @@ std::tuple<Array, Array> training_epoch(const SentimentNeuronModel& model,
                 utils::Timer backward("backward");
                 graph::backward();
             }
-            auto op = op::control_dependencies(solver->step(params), {epoch_error});
+            auto op = op::control_dependency(solver->step(params), epoch_error);
             backward.stop();
             op.eval();
         }
