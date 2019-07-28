@@ -24,6 +24,7 @@ DEFINE_string(path, utils::dir_join({STR(DALI_EXAMPLES_DATA_DIR), "mnist"}), "Lo
 DEFINE_int32(batch_size, 256, "Batch size");
 DEFINE_int32(epochs, 2, "Epochs");
 DEFINE_int32(max_fusion_arguments, 3, "Max fusion arguments");
+DEFINE_int32(prediction_classes, 12, "Number of output classes");
 
 struct MnistCnn {
     ConvLayer conv1;
@@ -32,11 +33,11 @@ struct MnistCnn {
     Layer     fc2;
     bool use_nchw_;
 
-    MnistCnn(bool use_nchw) : use_nchw_(use_nchw) {
+    MnistCnn(bool use_nchw, int prediction_classes) : use_nchw_(use_nchw) {
         conv1 = ConvLayer(32, 1, 5, 5, 1, 1, PADDING_T_SAME, use_nchw ? "NCHW" : "NHWC");
         conv2 = ConvLayer(64, 32, 5, 5, 1, 1, PADDING_T_SAME, use_nchw ? "NCHW" : "NHWC");
         fc1 = Layer(7 * 7 * 64, 1024);
-        fc2 = Layer(1024, 10);
+        fc2 = Layer(1024, prediction_classes);
     }
 
     Tensor activate(Tensor images, float keep_prob) const {
@@ -152,6 +153,9 @@ int main (int argc, char *argv[]) {
         ASSERT2(FLAGS_device < Device::num_gpus(), utils::make_message("Cannot run on GPU ", FLAGS_device, ", only found ", Device::num_gpus(), " gpus."));
         default_preferred_device = Device::gpu(FLAGS_device);
     }
+    ASSERT2(FLAGS_prediction_classes >= 10,
+        utils::make_message("Need at least 10 classes to do prediction, but got ",
+                            FLAGS_prediction_classes, "."));
     std::cout << "Running on " << default_preferred_device.description() << "." << std::endl;
     utils::random::set_seed(123123);
     const int batch_size = FLAGS_batch_size;
@@ -167,7 +171,7 @@ int main (int argc, char *argv[]) {
     Tensor train_x    = ds[0], train_y    = ds[1],
            validate_x = ds[2], validate_y = ds[3],
            test_x     = ds[4], test_y     = ds[5];
-    MnistCnn model(FLAGS_use_nchw);
+    MnistCnn model(FLAGS_use_nchw, FLAGS_prediction_classes);
     auto params = model.parameters();
     auto solver = solver::construct("sgd", params, 0.01);
     solver->clip_norm_ = 0.0;
