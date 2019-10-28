@@ -6,6 +6,7 @@ project("dali-examples")
 # additional cmake find files
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 set(DALI_EXAMPLES_DATA_DIR "${PROJECT_SOURCE_DIR}/data")
+set(DALI_EXAMPLES_SOURCE_DIR "${PROJECT_SOURCE_DIR}")
 
 
 if (DEFINED ENV{DALI_HOME} AND NOT "$ENV{DALI_HOME}" STREQUAL "")
@@ -31,8 +32,8 @@ include_directories(${PROJECT_SOURCE_DIR})
 # TODO(szymon): reenable once models are ported
 # file(GLOB_RECURSE UTILS_FILES "${PROJECT_SOURCE_DIR}/models/*.cpp")
 
-list(APPEND       UTILS_FILES "examples/utils.h")
-add_library(utils examples/utils.cpp ${UTILS_FILES})
+list(APPEND       UTILS_FILES "examples/utils.h" "examples/onnx_attribute.h")
+add_library(utils examples/onnx_attribute.cpp examples/utils.cpp ${UTILS_FILES})
 target_link_libraries(utils ${CMAKE_DL_LIBS})
 
 # Compile all the examples
