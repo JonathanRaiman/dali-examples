@@ -46,54 +46,96 @@ std::vector<Tensor> load_dataset(const std::string& path) {
             test_x,     test_y};
 }
 
-struct DaliSupportedDtype {
-    std::string onnx_name;
-    std::string dali_name;
-    bool supported;
-    DaliSupportedDtype(const std::string& onnx_name_) : onnx_name(onnx_name_), supported(false) {}
-    DaliSupportedDtype(const std::string& onnx_name_, const std::string& dali_name_) : onnx_name(onnx_name_), dali_name(dali_name_), supported(true) {}
-};
+namespace {
+    struct DaliSupportedDtype {
+        std::string onnx_name;
+        std::string dali_name;
+        DType dali_dtype;
+        bool supported;
+        DaliSupportedDtype(const std::string& onnx_name_) : onnx_name(onnx_name_), supported(false) {}
+        DaliSupportedDtype(const std::string& onnx_name_, const std::string& dali_name_, DType dtype) : onnx_name(onnx_name_), dali_name(dali_name_), supported(true), dali_dtype(dtype) {}
+    };
 
-struct PoolMethod {
-  std::string name;
-  POOLING_T pooling_t;
-  PoolMethod(const std::string& name_, POOLING_T pooling_t_) : name(name_), pooling_t(pooling_t_) {}
-};
+    struct PoolMethod {
+        std::string name;
+        POOLING_T pooling_t;
+        PoolMethod(const std::string& name_, POOLING_T pooling_t_) : name(name_), pooling_t(pooling_t_) {}
+    };
 
-std::tuple<Array, PADDING_T> enforce_padding_policy(Array input, const onnx_attr_t& attributes) {
-  PADDING_T padding = PADDING_T_VALID;
-  if (attributes.find("pads") != attributes.end()) {
-      auto& explicit_pads = DALI_MAPAT(attributes, "pads").ints;
-      bool explicit_padding_info = false;
-      for (auto v : explicit_pads) {
-        if (v != 0) {
-          explicit_padding_info = true;
+    std::tuple<Array, PADDING_T> enforce_padding_policy(Array input, const onnx_attr_t& attributes) {
+        PADDING_T padding = PADDING_T_VALID;
+        if (attributes.find("pads") != attributes.end()) {
+            auto& explicit_pads = DALI_MAPAT(attributes, "pads").ints;
+            bool explicit_padding_info = false;
+            for (auto v : explicit_pads) {
+                if (v != 0) {
+                    explicit_padding_info = true;
+                }
+            }
+            if (explicit_padding_info) {
+                shape_t paddings;
+                for (auto& v : explicit_pads) {
+                    paddings.emplace_back(v);
+                }
+                input = op::pad(input, paddings);
+            }
         }
-      }
-      if (explicit_padding_info) {
-        shape_t paddings;
-        for (auto& v : explicit_pads) {
-          paddings.emplace_back(v);
+        if (attributes.find("auto_pad") != attributes.end()) {
+            auto& pad_setting = DALI_MAPAT(attributes, "auto_pad").s;
+            if (pad_setting == "NOTSET") {
+                padding = PADDING_T_VALID;
+            } else {
+                if (pad_setting == "SAME_UPPER" || pad_setting == "SAME_LOWER") {
+                    // TODO(jonathan): this is actually confounding two types of padding. We only support one kind.
+                    // figure out which one.
+                    padding = PADDING_T_SAME; 
+                } else {
+                    padding = PADDING_T_VALID;
+                }
+            }
         }
-        input = op::pad(input, paddings);
-      }
-  }
-  if (attributes.find("auto_pad") != attributes.end()) {
-    auto& pad_setting = DALI_MAPAT(attributes, "auto_pad").s;
-    if (pad_setting == "NOTSET") {
-      padding = PADDING_T_VALID;
-    } else {
-      if (pad_setting == "SAME_UPPER" || pad_setting == "SAME_LOWER") {
-        // TODO(jonathan): this is actually confounding two types of padding. We only support one kind.
-        // figure out which one.
-        padding = PADDING_T_SAME; 
-      } else {
-        padding = PADDING_T_VALID;
-      }
+        return std::make_tuple(input, padding);
     }
-  }
-  return std::make_tuple(input, padding);
+
+
+    int get_int_with_default(const onnx_attr_t& attributes, const std::string& key, int default_value) {
+        auto pos = attributes.find(key);
+        return pos != attributes.end() ? pos->second.i : default_value;
+    }
+
+    std::vector<DaliSupportedDtype> onnx_dtype_mapping = {
+        DaliSupportedDtype("UNDEFINED"), 
+        DaliSupportedDtype("FLOAT", "DTYPE_FLOAT", DTYPE_FLOAT), 
+        DaliSupportedDtype("UINT8", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("INT8", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("UINT16", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("INT16", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("INT32", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("INT64", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("STRING"), 
+        DaliSupportedDtype("BOOL"), 
+        DaliSupportedDtype("FLOAT16", "DTYPE_FLOAT", DTYPE_FLOAT), 
+        DaliSupportedDtype("DOUBLE", "DTYPE_DOUBLE", DTYPE_DOUBLE), 
+        DaliSupportedDtype("UINT32"), 
+        DaliSupportedDtype("UINT64"), 
+        DaliSupportedDtype("COMPLEX64"), 
+        DaliSupportedDtype("COMPLEX128"), 
+        DaliSupportedDtype("BFLOAT16")
+    };
+
+    void convert_onnx_dtype_to_dali_dtype(int onnx_dtype, DType* dtype, bool* supported) {
+        if (onnx_dtype < 0 || onnx_dtype >= onnx_dtype_mapping.size()) {
+            *supported = false;
+        }
+        if (onnx_dtype_mapping[onnx_dtype].supported) {
+          *dtype = onnx_dtype_mapping[onnx_dtype].dali_dtype;
+          *supported = true;
+        } else {
+          *supported = false;
+        }
+    }
 }
+
 
 int main (int argc, char *argv[]) {
     GFLAGS_NAMESPACE::SetUsageMessage(
@@ -116,25 +158,6 @@ int main (int argc, char *argv[]) {
     if ((FLAGS_recompile || compiler.is_loaded(hash)) || !compiler.load(hash)) {
         // todo generalize path to protobuf file...
         std::string extra_compile_args = " -I/Users/jonathanraiman/Desktop/Coding/onnx_resources/proto/ -lprotobuf -I" + utils::dir_join({STR(DALI_EXAMPLES_SOURCE_DIR), "examples"});
-        std::vector<DaliSupportedDtype> mapping = {
-            DaliSupportedDtype("UNDEFINED"), 
-            DaliSupportedDtype("FLOAT", "DTYPE_FLOAT"), 
-            DaliSupportedDtype("UINT8", "DTYPE_INT32"), 
-            DaliSupportedDtype("INT8", "DTYPE_INT32"), 
-            DaliSupportedDtype("UINT16", "DTYPE_INT32"), 
-            DaliSupportedDtype("INT16", "DTYPE_INT32"), 
-            DaliSupportedDtype("INT32", "DTYPE_INT32"), 
-            DaliSupportedDtype("INT64", "DTYPE_INT32"), 
-            DaliSupportedDtype("STRING"), 
-            DaliSupportedDtype("BOOL"), 
-            DaliSupportedDtype("FLOAT16", "DTYPE_FLOAT"), 
-            DaliSupportedDtype("DOUBLE", "DTYPE_DOUBLE"), 
-            DaliSupportedDtype("UINT32"), 
-            DaliSupportedDtype("UINT64"), 
-            DaliSupportedDtype("COMPLEX64"), 
-            DaliSupportedDtype("COMPLEX128"), 
-            DaliSupportedDtype("BFLOAT16")
-        };
         std::stringstream ss;
         std::vector<std::string> attr_types = {
             "UNDEFINED",
@@ -172,9 +195,9 @@ int main (int argc, char *argv[]) {
                "}\n");
         ss << "onnx::TensorProto::DataType int_to_onnx_dtype(int value) {\n"
               "    switch (value) {\n";
-        for (int i = 0; i < mapping.size(); i++) {
+        for (int i = 0; i < onnx_dtype_mapping.size(); i++) {
             ss << "        case " << i << ":\n"
-                  "            return onnx::TensorProto::" << mapping[i].onnx_name << ";\n";
+                  "            return onnx::TensorProto::" << onnx_dtype_mapping[i].onnx_name << ";\n";
         }
         ss << "        default:\n"
               "            return onnx::TensorProto::UNDEFINED;\n"
@@ -183,7 +206,7 @@ int main (int argc, char *argv[]) {
         ss << ("void convert_onnx_dtype_to_dali_dtype(const onnx::TensorProto::DataType& onnx_dtype, DType* dtype, bool* supported) {\n"
                "    *supported = false;\n"
                "    switch (onnx_dtype) {\n");
-        for (auto& k : mapping) {
+        for (auto& k : onnx_dtype_mapping) {
             ss << "        case onnx::TensorProto::" << k.onnx_name << ":\n";
             if (k.supported) {
                 ss << "            *dtype = " << k.dali_name << ";\n"
@@ -384,11 +407,123 @@ int main (int argc, char *argv[]) {
     name2op.emplace("Relu", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
         ASSERT2(args.size() == 1, "Expected 1 argument for Relu.");
         return {op::relu(args[0])};
+    }); 
+    name2op.emplace("Sinh", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Sinh.");
+        return {op::sinh(args[0])};
+    });
+    name2op.emplace("Cosh", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Cosh.");
+        return {op::cosh(args[0])};
+    });
+    name2op.emplace("Tanh", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Tanh.");
+        return {op::tanh(args[0])};
+    });
+    name2op.emplace("Asinh", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Asinh.");
+        return {op::asinh(args[0])};
+    });
+    name2op.emplace("Acosh", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Acosh.");
+        return {op::acosh(args[0])};
+    });
+    name2op.emplace("Atanh", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Atanh.");
+        return {op::atanh(args[0])};
+    });
+    name2op.emplace("Neg", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Neg.");
+        return {op::negate(args[0])};
+    });
+    name2op.emplace("Log", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Log.");
+        return {op::log(args[0])};
+    });
+    name2op.emplace("Sqrt", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Sqrt.");
+        return {op::sqrt(args[0])};
+    });
+    name2op.emplace("Reciprocal", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Reciprocal.");
+        return {op::eltinv(args[0])};
+    });
+    name2op.emplace("Sign", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Sign.");
+        return {op::sign(args[0])};
+    });
+    name2op.emplace("Erf", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Erf.");
+        return {op::erf(args[0])};
+    });
+    name2op.emplace("Sin", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Sin.");
+        return {op::sin(args[0])};
+    });
+    name2op.emplace("Cos", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Cos.");
+        return {op::cos(args[0])};
+    });
+    name2op.emplace("Tan", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Tan.");
+        return {op::tan(args[0])};
+    });
+    name2op.emplace("Asin", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Asin.");
+        return {op::asin(args[0])};
+    });
+    name2op.emplace("Acos", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Acos.");
+        return {op::acos(args[0])};
+    });
+    name2op.emplace("Atan", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Atan.");
+        return {op::atan(args[0])};
+    });
+    name2op.emplace("Exp", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Exp.");
+        return {op::exp(args[0])};
+    });
+    name2op.emplace("Sigmoid", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Sigmoid.");
+        return {op::sigmoid(args[0])};
+    });
+    name2op.emplace("Softplus", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Softplus.");
+        return {op::softplus(args[0])};
+    });
+    name2op.emplace("Softsign", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Softsign.");
+        return {op::softsign(args[0])};
+    });
+    name2op.emplace("Abs", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Abs.");
+        return {op::abs(args[0])};
     });
     name2op.emplace("Add", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
-        ASSERT2(args.size() == 2, "Expected 2 arguments for Reshape.");
+        ASSERT2(args.size() == 2, "Expected 2 arguments for Add.");
         return {args[0] + args[1]};
     });
+    name2op.emplace("Sum", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        return {op::add(args)};
+    });
+    name2op.emplace("Sub", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 2, "Expected 2 arguments for Sub.");
+        return {args[0] - args[1]};
+    });
+    name2op.emplace("Div", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 2, "Expected 2 arguments for Div.");
+        return {args[0] / args[1]};
+    });
+    name2op.emplace("Mul", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 2, "Expected 2 arguments for Mul.");
+        return {args[0] * args[1]};
+    });
+    name2op.emplace("Pow", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 2, "Expected 2 arguments for Pow.");
+        return {op::pow(args[0], args[1])};
+    });
+    
     name2op.emplace("Reshape", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
         ASSERT2(args.size() == 2, "Expected 2 arguments for Reshape.");
         ASSERT2(args[1].is_buffer(), "Expected argument 2 of Reshape to be a buffer");
@@ -431,9 +566,106 @@ int main (int argc, char *argv[]) {
         return {op::conv2d(input, args[1], strides[0], strides[1], padding, "NCHW")};
     });
 
-    // TODO: implement Unsqueeze, Cast,
+    // TODO: implement
+    // And
+    // Argmax
+    // Argmin
+    // BatchNormalization
+    // BitShift
+    // Ceil,
+    // Clip,
+    // Compress,
+    // Concat,
+    // ConcatFromSequence,
+    // Constant,
+    // ConstantOfShape,
+    // ConvTranspose,
+    // CumSum,
+    // DepthToSpace,
+    // Det
+    // Dropout
+    // Elu
+    // Equal
+    // Expand
+    // EyeLike
+    // Floor
+    // GRU
+    // Gather
+    // GatherElements
+    // GatherND
+    // GlobalLpPool
+    // Greater
+    // HardSigmoid
+    // Hardmax
+    // If
+    // InstanceNormalization
+    // Isinf
+    // IsNan
+    // LRN
+    // LSTM
+    // LeakyRelu
+    // Less
+    // LogSoftmax
+    // Loop
+    // LpNormalization
+    // LpPool
+    // MaxRoiPool
+    // MaxUnpool
+    // Min (https://github.com/onnx/onnx/blob/master/docs/Operators.md#Min)
+    // Mod
+    // Multinomial
+    // NonMaxSuppression
+    // Nonzero
+    // Not
+    // OneHot
+    // Or
+    // PRelu
+    // Pad
+    // RNN,
+    // RandomNormal
+    // RandomNormalLike
+    // RandomUniform
+    // RandomUniformLike
+    // Range,
+    // ReduceL1,
+    // ReduceLogSum,
+    // ReduceLogSumExp,
+    // ReduceSumSquare,
+    // Resize,
+    // ReverseSequence,
+    // RoiAlign,
+    // Round,
+    // Scan,
+    // Scatter,
+    // ScatterElements,
+    // ScatterND,
+    // Selu,
+    // SequenceAt,
+    // SequenceConstruct,
+    // SequenceEmpty,
+    // SequenceErase,
+    // SequenceInsert,
+    // SequenceLength,
     // Shape,
+    // Shrink,
+    // Size,
     // Slice (https://github.com/onnx/onnx/blob/master/docs/Operators.md#slice)
+    // Softmax (https://github.com/onnx/onnx/blob/master/docs/Operators.md#softmax),
+    // SpaceToDepth,
+    // Split,
+    // SplitToSequence,
+    // Squeeze,
+    // StringNormalizer,
+    // TfIdfVectorizer,
+    // ThresholdedRelu,
+    // Tile,
+    // TopK,
+    // Unique,
+    // Unsqueeze,
+    // Where,
+    // XOR
+
+    // Reshape is messed up (reshape with dimensions 0 doesn't make much sense)
 
     name2op.emplace("BatchNormalization", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
         ASSERT2(args.size() == 5, "Expected 5 arguments for BatchNormalization.");
@@ -444,6 +676,20 @@ int main (int argc, char *argv[]) {
         ASSERT2(args.size() == 1, "Expected 1 argument for Identity.");
         // TODO(jonathan): implement
         return {args[0]};
+    });
+
+    name2op.emplace("Cast", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for Cast.");
+        auto& onnx_to_dtype = DALI_MAPAT(attributes, "to").i;
+        DType dtype;
+        bool supported;
+        convert_onnx_dtype_to_dali_dtype(onnx_to_dtype, &dtype, &supported);
+        if (onnx_to_dtype > 0 && onnx_to_dtype < onnx_dtype_mapping.size()) {
+            ASSERT2(supported, utils::make_message("Could not build Cast, ONNX dtype ", onnx_to_dtype, " (", onnx_dtype_mapping[onnx_to_dtype].onnx_name, ") not yet supported."));
+        } else {
+            ASSERT2(supported, utils::make_message("Could not build Cast, ONNX dtype ", onnx_to_dtype, " not yet supported."));
+        }
+        return {args[0].astype(dtype)};
     });
     name2op.emplace("Transpose", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
         ASSERT2(args.size() == 1, "Expected 1 argument for Transpose.");
@@ -479,10 +725,45 @@ int main (int argc, char *argv[]) {
         }
         return {op::L2_norm(args[0], axes, /*keepdims=*/true)};
     });
-
+    name2op.emplace("ReduceL2", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for ReduceL2.");
+        auto& axes = DALI_MAPAT(attributes, "axes").ints;
+        bool keepdims = get_int_with_default(attributes, "keepdims", true) == 1;
+        return {op::L2_norm(args[0], axes, /*keepdims=*/keepdims)};
+    });
+    name2op.emplace("ReduceMax", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for ReduceMax.");
+        auto& axes = DALI_MAPAT(attributes, "axes").ints;
+        bool keepdims = get_int_with_default(attributes, "keepdims", true) == 1;
+        return {op::max(args[0], axes, /*keepdims=*/keepdims)};
+    });
+    name2op.emplace("ReduceMin", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for ReduceMin.");
+        auto& axes = DALI_MAPAT(attributes, "axes").ints;
+        bool keepdims = get_int_with_default(attributes, "keepdims", true) == 1;
+        return {op::min(args[0], axes, /*keepdims=*/keepdims)};
+    });
+    name2op.emplace("ReduceMean", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for ReduceMean.");
+        auto& axes = DALI_MAPAT(attributes, "axes").ints;
+        bool keepdims = get_int_with_default(attributes, "keepdims", true) == 1;
+        return {op::mean(args[0], axes, /*keepdims=*/keepdims)};
+    });
+    name2op.emplace("ReduceProd", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for ReduceProd.");
+        auto& axes = DALI_MAPAT(attributes, "axes").ints;
+        bool keepdims = get_int_with_default(attributes, "keepdims", true) == 1;
+        return {op::prod(args[0], axes, /*keepdims=*/keepdims)};
+    });
+    name2op.emplace("ReduceSum", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 1, "Expected 1 argument for ReduceSum.");
+        auto& axes = DALI_MAPAT(attributes, "axes").ints;
+        bool keepdims = get_int_with_default(attributes, "keepdims", true) == 1;
+        return {op::sum(args[0], axes, /*keepdims=*/keepdims)};
+    });
 
     name2op.emplace("Flatten", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
-        ASSERT2(args.size() == 1, "Expected 1 argument for GlobalLpPool.");
+        ASSERT2(args.size() == 1, "Expected 1 argument for Flatten.");
         int axis = 1;
         if (attributes.find("axis") != attributes.end()) {
           axis = DALI_MAPAT(attributes, "axis").i;
@@ -658,18 +939,18 @@ int main (int argc, char *argv[]) {
             count += 1;
             name2array.emplace(name, array);
         }, &error);
-      if (error) {
+    if (error) {
         std::cerr << "Failed to parse model!" << std::endl;
-      } else {
+    } else {
         std::cout << "successfully parsed model!" << std::endl;
         std::cout << "Found " << count << " nodes!" << std::endl;
         if (missing_ops.empty() && missing_array == 0) {
-          for (auto& out : outputs) {
-            out.print();
-          }
+            for (auto& out : outputs) {
+                out.print();
+            }
         } else {
-          std::cout << "Missing ops " << std::vector<std::string>(missing_ops.begin(), missing_ops.end()) << std::endl;
-          std::cout << "Missing " << missing_array << " arrays" << std::endl;
+            std::cout << "Missing ops " << std::vector<std::string>(missing_ops.begin(), missing_ops.end()) << std::endl;
+            std::cout << "Missing " << missing_array << " arrays" << std::endl;
         }
-      }
+    }
 }
