@@ -49,11 +49,12 @@ std::vector<Tensor> load_dataset(const std::string& path) {
 namespace {
     struct DaliSupportedDtype {
         std::string onnx_name;
+        std::string cpp_name;
         std::string dali_name;
         DType dali_dtype;
         bool supported;
-        DaliSupportedDtype(const std::string& onnx_name_) : onnx_name(onnx_name_), supported(false) {}
-        DaliSupportedDtype(const std::string& onnx_name_, const std::string& dali_name_, DType dtype) : onnx_name(onnx_name_), dali_name(dali_name_), supported(true), dali_dtype(dtype) {}
+        DaliSupportedDtype(const std::string& onnx_name_, const std::string& cpp_name_) : onnx_name(onnx_name_), cpp_name(cpp_name_), supported(false) {}
+        DaliSupportedDtype(const std::string& onnx_name_, const std::string& cpp_name_, const std::string& dali_name_, DType dtype) : onnx_name(onnx_name_), cpp_name(cpp_name_), dali_name(dali_name_), supported(true), dali_dtype(dtype) {}
     };
 
     struct PoolMethod {
@@ -104,23 +105,23 @@ namespace {
     }
 
     std::vector<DaliSupportedDtype> onnx_dtype_mapping = {
-        DaliSupportedDtype("UNDEFINED"), 
-        DaliSupportedDtype("FLOAT", "DTYPE_FLOAT", DTYPE_FLOAT), 
-        DaliSupportedDtype("UINT8", "DTYPE_INT32", DTYPE_INT32), 
-        DaliSupportedDtype("INT8", "DTYPE_INT32", DTYPE_INT32), 
-        DaliSupportedDtype("UINT16", "DTYPE_INT32", DTYPE_INT32), 
-        DaliSupportedDtype("INT16", "DTYPE_INT32", DTYPE_INT32), 
-        DaliSupportedDtype("INT32", "DTYPE_INT32", DTYPE_INT32), 
-        DaliSupportedDtype("INT64", "DTYPE_INT32", DTYPE_INT32), 
-        DaliSupportedDtype("STRING"), 
-        DaliSupportedDtype("BOOL"), 
-        DaliSupportedDtype("FLOAT16", "DTYPE_FLOAT", DTYPE_FLOAT), 
-        DaliSupportedDtype("DOUBLE", "DTYPE_DOUBLE", DTYPE_DOUBLE), 
-        DaliSupportedDtype("UINT32"), 
-        DaliSupportedDtype("UINT64"), 
-        DaliSupportedDtype("COMPLEX64"), 
-        DaliSupportedDtype("COMPLEX128"), 
-        DaliSupportedDtype("BFLOAT16")
+        DaliSupportedDtype("UNDEFINED", "char"), 
+        DaliSupportedDtype("FLOAT", "float", "DTYPE_FLOAT", DTYPE_FLOAT), 
+        DaliSupportedDtype("UINT8", "google::protobuf::uint8", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("INT8", "int8_t", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("UINT16", "uint16_t", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("INT16", "int16_t", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("INT32", "int32_t", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("INT64", "int64_t", "DTYPE_INT32", DTYPE_INT32), 
+        DaliSupportedDtype("STRING", "char"), 
+        DaliSupportedDtype("BOOL", "int8_t"), 
+        DaliSupportedDtype("FLOAT16", "dali_float16_t", "DTYPE_FLOAT", DTYPE_FLOAT), 
+        DaliSupportedDtype("DOUBLE", "double", "DTYPE_DOUBLE", DTYPE_DOUBLE), 
+        DaliSupportedDtype("UINT32", "google::protobuf::uint32"), 
+        DaliSupportedDtype("UINT64", "google::protobuf::uint64"), 
+        DaliSupportedDtype("COMPLEX64", "float"), // Complex64 elements must be written as two consecutive FLOAT values, real component first.
+        DaliSupportedDtype("COMPLEX128", "double"), // Complex128 elements must be written as two consecutive DOUBLE values, real component first
+        DaliSupportedDtype("BFLOAT16", "dali_float16_t") // not yet supported
     };
 
     void convert_onnx_dtype_to_dali_dtype(int onnx_dtype, DType* dtype, bool* supported) {
@@ -182,6 +183,7 @@ int main (int argc, char *argv[]) {
                "#include \"onnx.pb.cc\"\n"
                "#include \"dali/array/array.h\"\n"
                "#include \"onnx_attribute.h\"\n"
+               "#include \"half2float.h\"\n"
                "\n"
                "ONNXAttribute::AttributeType convert_onnx_attribute_type_to_dali_attribute_type(onnx::AttributeProto::AttributeType type) {\n"
                "    switch (type) {\n");
@@ -328,9 +330,32 @@ int main (int argc, char *argv[]) {
                       "                    }\n"
                       "                }\n";
             }
-            ss << "              }\n";
+            ss << "            }\n";
         }
-        ss << ("            tensor_extractor(arr, tensor.name());\n"
+        ss << ("            if (tensor.has_raw_data()) {\n"
+               "                switch (int_to_onnx_dtype(tensor.data_type())) {\n");
+        // now try all possible castings of this data based on what is being stored.
+        for (int i = 0; i < onnx_dtype_mapping.size(); i++) {
+            if (onnx_dtype_mapping[i].supported) {
+                ss << "                    case " << i << ": {\n"
+                      "                        auto raw_data_ptr = reinterpret_cast<const " << onnx_dtype_mapping[i].cpp_name << "*>(tensor.raw_data().data());\n";
+                for (auto dtype_spec : dtype_specs) {
+                    auto cpp_dtype = dtype_to_cpp_name(std::get<0>(dtype_spec));
+                    ss << "                        if (dtype == " << std::get<1>(dtype_spec) << ") {\n"
+                          "                            " << cpp_dtype << "* ptr = static_cast<" << cpp_dtype << "*>(arr.memory()->mutable_data(Device::cpu()));\n"
+                          "                            for (unsigned int i = 0, n = arr.number_of_elements().value(); i < n; i++) {\n"
+                          "                                ptr[i] = raw_data_ptr[i];\n"
+                          "                            }\n"
+                          "                        }\n";
+                }
+                ss << "                        } break;\n";
+            }
+        }
+        ss << ("                    default:\n"
+               "                        break;\n"
+               "                }\n"
+               "            }\n"
+               "            tensor_extractor(arr, tensor.name());\n"
                "        }\n"
                "    }\n"
                "    {\n"
@@ -530,6 +555,7 @@ int main (int argc, char *argv[]) {
         ASSERT2(args[1].dtype() == DTYPE_INT32, "Expected argument 2 of Reshape to be integers.");
         ASSERT2(args[1].ndim() == 1, "Expected argument 2 of Reshape to be 1-dimensional.");
         std::vector<Dim> dims;
+        ELOG(args[0].shape());
         args[1].print();
         const int* shape_ptr = static_cast<int*>(args[1].memory()->readonly_data(Device::cpu()));
         for (int i = 0; i < args[1].shape()[0]; i++) {
@@ -832,30 +858,28 @@ int main (int argc, char *argv[]) {
             // input to graph
             // place those into the graph??
             for (auto& i : input_args) {
-                if (name2array.find(i.name) == name2array.end()) {
-                    if (i.is_tensor) {
-                        std::cout << "Found placeholder input: " << i.name << std::endl;
-                        std::cout << "                  shape_size " << i.shape.size() << std::endl;
-                        std::cout << "                  dtype " << i.dtype << std::endl;
-                        std::vector<Dim> shape;
-                        std::vector<std::string> dims;
+                if (name2array.find(i.name) == name2array.end() && i.is_tensor) {
+                    std::cout << "Found placeholder input: " << i.name << std::endl;
+                    std::cout << "                  shape_size " << i.shape.size() << std::endl;
+                    std::cout << "                  dtype " << i.dtype << std::endl;
+                    std::vector<Dim> shape;
+                    std::vector<std::string> dims;
   
-                        for (auto& v : i.shape) {
-                          if (v.has_dim_value) {
+                    for (auto& v : i.shape) {
+                        if (v.has_dim_value) {
                             dims.emplace_back(utils::make_message(v.dim_value));
                             shape.emplace_back(v.dim_value);
-                          } else {
+                        } else {
                             dims.emplace_back(v.dim_param);
                             // we don't know the shape, so let's put 1 for now...
                             shape.emplace_back(1);
-                          }
                         }
-                        std::cout << "                  " << dims << std::endl;
-                        std::cout << std::endl;
-                        Array pholder(shape, i.dtype);
-                        placeholders.emplace_back(pholder);
-                        name2array.emplace(i.name, pholder);
                     }
+                    std::cout << "                  " << dims << std::endl;
+                    std::cout << std::endl;
+                    Array pholder(shape, i.dtype);
+                    placeholders.emplace_back(pholder);
+                    name2array.emplace(i.name, pholder);
                 }
             }
         },
