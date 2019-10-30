@@ -576,6 +576,12 @@ int main (int argc, char *argv[]) {
         }
         return {args[0].reshape(dims)};
     });
+    name2op.emplace("Gather", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
+        ASSERT2(args.size() == 2, "Expected 2 arguments for Gather.");
+        int axis = get_int_with_default(attributes, "axis", 0);
+        ASSERT2(axis == 0, utils::make_message("Gather only supports axis=0 for now (got axis=", axis, ")"));
+        return {op::gather(args[0], args[1])};
+    });
     name2op.emplace("Conv", [](const std::vector<Array>& args, const onnx_attr_t& attributes) -> std::vector<Array> {
         ASSERT2(args.size() == 2, "Expected 2 arguments for Conv.");
         ASSERT2(DALI_MAPAT(attributes, "group").i == 1, "Currently only group=1 attribute supported for conv.");
@@ -616,7 +622,6 @@ int main (int argc, char *argv[]) {
     // EyeLike
     // Floor
     // GRU
-    // Gather
     // GatherElements
     // GatherND
     // GlobalLpPool
